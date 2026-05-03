@@ -494,7 +494,8 @@ const buildMetrics = (
   current: Landmark[] | null,
   baseline: Landmark[] | null,
   handedness: Handedness,
-  targetSide: TargetSide
+  targetSide: TargetSide,
+  cameraView: CameraView
 ): SwingMetric[] => {
   if (!current) {
     return [
@@ -542,6 +543,125 @@ const buildMetrics = (
         score: 0,
         status: "warn",
         icon: "center"
+      }
+    ];
+  }
+
+  if (cameraView === "down-the-line") {
+    const leftShoulder = current[11];
+    const rightShoulder = current[12];
+    const leftElbow = current[13];
+    const rightElbow = current[14];
+    const leftWrist = current[15];
+    const rightWrist = current[16];
+    const leftHip = current[23];
+    const rightHip = current[24];
+    const leadShoulder = handedness === "right" ? leftShoulder : rightShoulder;
+    const leadElbow = handedness === "right" ? leftElbow : rightElbow;
+    const leadWrist = handedness === "right" ? leftWrist : rightWrist;
+    const leadHip = handedness === "right" ? leftHip : rightHip;
+    const shoulderMid = midpoint(leftShoulder, rightShoulder);
+    const hipMid = midpoint(leftHip, rightHip);
+    const wristMid = midpoint(leftWrist, rightWrist);
+    const baselineShoulderMid = baseline ? midpoint(baseline[11], baseline[12]) : undefined;
+    const baselineHipMid = baseline ? midpoint(baseline[23], baseline[24]) : undefined;
+    const baselineWristMid = baseline ? midpoint(baseline[15], baseline[16]) : undefined;
+    const shoulderWidth = Math.max(distance(leftShoulder, rightShoulder), 0.08);
+    const baselineShoulderWidth = baseline
+      ? Math.max(distance(baseline[11], baseline[12]), 0.08)
+      : shoulderWidth;
+
+    const headVerticalPct = baseline
+      ? (Math.abs(current[0].y - baseline[0].y) / baselineShoulderWidth) * 100
+      : 0;
+    const headScore = baseline ? clamp(105 - headVerticalPct * 3.2) : 58;
+
+    const postureAngle = lineAngle(shoulderMid, hipMid);
+    const baselinePostureAngle =
+      baselineShoulderMid && baselineHipMid ? lineAngle(baselineShoulderMid, baselineHipMid) : postureAngle;
+    const postureChange = Math.abs(postureAngle - baselinePostureAngle);
+    const postureScore = baseline ? clamp(104 - postureChange * 4.5) : 58;
+
+    const hipDepthPct =
+      baseline && hipMid && baselineHipMid
+        ? (Math.abs(hipMid.x - baselineHipMid.x) / baselineShoulderWidth) * 100
+        : 0;
+    const hipScore = baseline ? clamp(102 - hipDepthPct * 3.4) : 58;
+
+    const handDepthPct =
+      baseline && wristMid && baselineWristMid
+        ? (Math.abs(wristMid.x - baselineWristMid.x) / baselineShoulderWidth) * 100
+        : 0;
+    const handScore = baseline ? clamp(42 + Math.min(handDepthPct * 2.8, 58)) : 58;
+
+    const connectionRatio =
+      pointLineDistance(leadElbow, leadShoulder, leadHip) / shoulderWidth;
+    const connectionScore = clamp(112 - connectionRatio * 118);
+
+    return [
+      {
+        id: "dtl-head",
+        label: "Head level",
+        value: baseline ? `${headVerticalPct.toFixed(0)}% SW` : "setup nodig",
+        detail: baseline
+          ? headVerticalPct <= 10
+            ? "Hoofdhoogte blijft rustig door de swing."
+            : "Veel op/neer beweging; contact en posture worden dan wisselvallig."
+          : "Kalibreer address voor head-level analyse.",
+        score: Math.round(headScore),
+        status: scoreStatus(headScore),
+        icon: "head"
+      },
+      {
+        id: "dtl-posture",
+        label: "Posture behoud",
+        value: baseline ? `${postureChange.toFixed(0)} deg` : "setup nodig",
+        detail: baseline
+          ? postureChange <= 8
+            ? "Spine/posture lijn blijft dicht bij setup."
+            : "Posture verandert veel; dit lijkt op opkomen of early-extension risico."
+          : "Kalibreer address om spine angle te vergelijken.",
+        score: Math.round(postureScore),
+        status: scoreStatus(postureScore),
+        icon: "shoulder"
+      },
+      {
+        id: "dtl-hip-depth",
+        label: "Hip depth",
+        value: baseline ? `${hipDepthPct.toFixed(0)}% SW` : "setup nodig",
+        detail: baseline
+          ? hipDepthPct <= 12
+            ? "Heupcentrum blijft redelijk in dezelfde diepte."
+            : "Heupen bewegen sterk horizontaal; check early extension of wegduwen van de bal."
+          : "Kalibreer address voor heupdiepte.",
+        score: Math.round(hipScore),
+        status: scoreStatus(hipScore),
+        icon: "center"
+      },
+      {
+        id: "dtl-hands",
+        label: "Hand path depth",
+        value: baseline ? `${handDepthPct.toFixed(0)}% SW` : "setup nodig",
+        detail: baseline
+          ? handDepthPct >= 10
+            ? "Handen veranderen zichtbaar van diepte; controleer of dit uit borstturn komt."
+            : "Weinig hand-depth zichtbaar; takeaway kan te recht/armsy worden."
+          : "Kalibreer setup en analyseer takeaway/top.",
+        score: Math.round(handScore),
+        status: scoreStatus(handScore),
+        icon: "connection"
+      },
+      {
+        id: "dtl-connection",
+        label: "Arm-body connection",
+        value: `${connectionRatio.toFixed(2)} SW`,
+        detail:
+          connectionRatio <= 0.45
+            ? "Lead arm blijft dicht bij de torso-lijn."
+            : "Lead arm komt los van de torso; zijkant-video toont dit vaak duidelijk.",
+        score: Math.round(connectionScore),
+        status: scoreStatus(connectionScore),
+        icon: "arm"
       }
     ];
   }
@@ -805,8 +925,8 @@ export default function Home() {
   const [sessions, setSessions] = useState<SessionEntry[]>([]);
 
   const metrics = useMemo(
-    () => buildMetrics(landmarks, baseline, handedness, targetSide),
-    [baseline, handedness, landmarks, targetSide]
+    () => buildMetrics(landmarks, baseline, handedness, targetSide, cameraView),
+    [baseline, cameraView, handedness, landmarks, targetSide]
   );
   const baselineMotion = useMemo(
     () => (baseline ? extractMotionPoint(baseline, 0) : null),
@@ -1858,7 +1978,10 @@ export default function Home() {
               </div>
             </div>
             <p className={`status-line ${poseStatus.includes("mislukt") ? "error-line" : ""}`}>
-              {poseStatus} {cameraView === "down-the-line" ? "2D-metrics zijn het sterkst met face-on video." : ""}
+              {poseStatus}{" "}
+              {cameraView === "down-the-line"
+                ? "Down-the-line metrics letten op posture, hip depth en hand path."
+                : "Face-on metrics letten op sway, stack center en lead shoulder down."}
             </p>
           </div>
         </section>
@@ -1985,15 +2108,18 @@ export default function Home() {
                 </div>
                 <div className="motion-card">
                   <strong>{motionSummary ? `${motionSummary.centerAwayPct.toFixed(0)}%` : "--"}</strong>
-                  <span>center weg van target</span>
+                  <span>{cameraView === "down-the-line" ? "center horizontaal A" : "center weg van target"}</span>
                 </div>
                 <div className="motion-card">
                   <strong>{motionSummary ? `${motionSummary.centerTargetPct.toFixed(0)}%` : "--"}</strong>
-                  <span>center naar target</span>
+                  <span>{cameraView === "down-the-line" ? "center horizontaal B" : "center naar target"}</span>
                 </div>
               </div>
               <p className="status-line">
-                Oranje trackt je hoofd. Blauw trackt borst/heup-center. Voor Saguto wil je vooral weinig drift weg van target zien.
+                Oranje trackt je hoofd. Blauw trackt borst/heup-center.{" "}
+                {cameraView === "down-the-line"
+                  ? "Bij zijkant-video gebruik je dit vooral voor posture en early-extension indicatie."
+                  : "Voor Saguto wil je vooral weinig drift weg van target zien."}
               </p>
             </div>
           </section>
