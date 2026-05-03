@@ -347,6 +347,53 @@ button {
   line-height: 1.4;
 }
 
+.setup-wizard {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.setup-item {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 8px;
+  align-items: start;
+  min-height: 78px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+}
+
+.setup-dot {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--amber);
+  background: #fff7df;
+}
+
+.setup-dot-done {
+  color: var(--green-dark);
+  background: #eff9f2;
+}
+
+.setup-item strong {
+  display: block;
+  font-size: 12px;
+}
+
+.setup-item span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -470,6 +517,34 @@ button {
   font-size: 12px;
 }
 
+.phase-jump-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.phase-jump-btn {
+  min-height: 48px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  padding: 7px;
+  text-align: left;
+}
+
+.phase-jump-btn strong {
+  display: block;
+  font-size: 12px;
+}
+
+.phase-jump-btn span {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .pill {
   display: inline-flex;
   align-items: center;
@@ -552,6 +627,52 @@ button {
   color: var(--muted);
   line-height: 1.5;
   font-size: 14px;
+}
+
+.delta-line {
+  margin-top: 6px !important;
+  font-size: 12px !important;
+}
+
+.confidence-strip {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  margin-top: 14px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+}
+
+.confidence-strip strong {
+  display: block;
+  font-size: 13px;
+}
+
+.confidence-strip span,
+.confidence-strip small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.confidence-meter {
+  height: 8px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: #e1e7df;
+}
+
+.confidence-meter span {
+  display: block;
+  height: 100%;
+  width: var(--value);
+  background: var(--blue);
+}
+
+.focus-row {
+  margin-bottom: 10px;
 }
 
 .metric-list {
@@ -806,6 +927,30 @@ button {
   line-height: 1.4;
 }
 
+.shot-result-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+  margin-bottom: 10px;
+}
+
+.shot-btn {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--ink);
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.shot-btn[aria-pressed="true"] {
+  border-color: var(--green-dark);
+  background: #eff9f2;
+  color: var(--green-dark);
+}
+
 .status-line {
   min-height: 24px;
   color: var(--muted);
@@ -854,9 +999,15 @@ button {
   .settings-grid,
   .mobile-capture,
   .motion-grid,
+  .setup-wizard,
   .trim-strip,
   .score-band {
     grid-template-columns: 1fr;
+  }
+
+  .phase-jump-strip,
+  .shot-result-grid {
+    grid-template-columns: 1fr 1fr;
   }
 
   .top-actions .btn {

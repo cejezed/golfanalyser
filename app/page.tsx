@@ -45,6 +45,7 @@ type TargetSide = "left" | "right";
 type CameraView = "face-on" | "down-the-line";
 type MetricStatus = "good" | "warn" | "bad";
 type VideoOrientation = "landscape" | "portrait" | "square";
+type ShotResult = "unknown" | "brilliant" | "straight" | "fat" | "thin" | "push" | "pull" | "slice";
 
 type Landmark = {
   x: number;
@@ -80,6 +81,9 @@ type SessionEntry = {
   club: string;
   score: number;
   focus: string;
+  shot: ShotResult;
+  cameraView: CameraView;
+  confidence: number;
   cue?: string;
 };
 
@@ -101,6 +105,19 @@ type BestSwing = {
 type BestSwingRecord = Omit<BestSwing, "url"> & {
   id: "best";
   blob: Blob;
+};
+
+type SwingPhase = {
+  id: "address" | "takeaway" | "top" | "impact" | "finish";
+  label: string;
+  time: number;
+  cue: string;
+};
+
+type SetupItem = {
+  label: string;
+  text: string;
+  done: boolean;
 };
 
 type MotionPoint = {
@@ -172,6 +189,17 @@ const checkpoints = [
     cue: "Body blijft draaien, handle wint van clubhead",
     target: "Borst stopt niet, armen blijven verbonden"
   }
+];
+
+const shotResults: Array<{ id: ShotResult; label: string }> = [
+  { id: "unknown", label: "Geen" },
+  { id: "brilliant", label: "Briljant" },
+  { id: "straight", label: "Straight" },
+  { id: "fat", label: "Fat" },
+  { id: "thin", label: "Thin" },
+  { id: "push", label: "Push" },
+  { id: "pull", label: "Pull" },
+  { id: "slice", label: "Slice" }
 ];
 
 const referencePrinciples = [
@@ -431,6 +459,57 @@ const detectSwingWindow = (
     end,
     peak: peakSample.time
   };
+};
+
+const buildSwingPhases = (window: SwingWindow, cameraView: CameraView): SwingPhase[] => {
+  const backswingSpan = Math.max(window.peak - window.start, 0.25);
+  const topTime = clamp(window.start + backswingSpan * 0.72, window.start, window.end);
+  const takeawayTime = clamp(window.start + backswingSpan * 0.34, window.start, window.end);
+  const impactTime = clamp(window.peak, window.start, window.end);
+
+  return [
+    {
+      id: "address",
+      label: "Address",
+      time: window.start,
+      cue: cameraView === "face-on" ? "Stack center en head box" : "Posture en afstand tot bal"
+    },
+    {
+      id: "takeaway",
+      label: "Takeaway",
+      time: takeawayTime,
+      cue: cameraView === "face-on" ? "Handen naar binnen" : "Hand path wordt dieper"
+    },
+    {
+      id: "top",
+      label: "Top",
+      time: topTime,
+      cue: cameraView === "face-on" ? "Geen sway weg van target" : "Posture blijft in lijn"
+    },
+    {
+      id: "impact",
+      label: "Impact",
+      time: impactTime,
+      cue: cameraView === "face-on" ? "Center target-side" : "Heupdiepte blijft behouden"
+    },
+    {
+      id: "finish",
+      label: "Finish",
+      time: window.end,
+      cue: "Balans en body release"
+    }
+  ];
+};
+
+const poseCoverageScore = (landmarks: Landmark[] | null) => {
+  if (!landmarks) return 0;
+  const indexes = [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
+  const visible = indexes.filter((index) => {
+    const point = landmarks[index];
+    return point && (point.visibility ?? point.presence ?? 1) > 0.35;
+  }).length;
+
+  return visible / indexes.length;
 };
 
 const openBestSwingDb = () =>
@@ -906,6 +985,8 @@ export default function Home() {
   const [cameraView, setCameraView] = useState<CameraView>("face-on");
   const [club, setClub] = useState("7 iron");
   const [notes, setNotes] = useState("");
+  const [shotResult, setShotResult] = useState<ShotResult>("unknown");
+  const [focusMetricId, setFocusMetricId] = useState("auto");
   const [activeCheckpoint, setActiveCheckpoint] = useState(checkpoints[0].id);
   const [poseStatus, setPoseStatus] = useState("Pose model nog niet geladen.");
   const [isPoseLoading, setIsPoseLoading] = useState(false);
@@ -919,6 +1000,7 @@ export default function Home() {
   const [baseline, setBaseline] = useState<Landmark[] | null>(null);
   const [motionTrace, setMotionTrace] = useState<MotionPoint[]>([]);
   const [swingWindow, setSwingWindow] = useState<SwingWindow | null>(null);
+  const [swingPhases, setSwingPhases] = useState<SwingPhase[]>([]);
   const [isLoopingWindow, setIsLoopingWindow] = useState(true);
   const [bestSwing, setBestSwing] = useState<BestSwing | null>(null);
   const [referenceMode, setReferenceMode] = useState<"saguto" | "best">("saguto");
@@ -945,7 +1027,51 @@ export default function Home() {
     () => buildMotionPath(motionTrace, motionOrigin, (point) => point.center),
     [motionOrigin, motionTrace]
   );
-
+  const poseCoverage = poseCoverageScore(landmarks);
+  const confidenceScore = Math.round(
+    clamp(
+      (videoUrl || cameraStream ? 16 : 0) +
+        (landmarks ? 20 : 0) +
+        poseCoverage * 14 +
+        (baseline ? 18 : 0) +
+        (motionTrace.length >= 12 ? 16 : motionTrace.length ? 8 : 0) +
+        (swingWindow ? 10 : 0) +
+        (videoOrientation === "portrait" || videoOrientation === "landscape" ? 6 : 3)
+    )
+  );
+  const confidenceLabel =
+    confidenceScore >= 78 ? "Hoog" : confidenceScore >= 50 ? "Middel" : "Laag";
+  const setupItems: SetupItem[] = useMemo(
+    () => [
+      {
+        label: "Hoek",
+        text:
+          cameraView === "face-on"
+            ? "Face-on: target links/rechts instellen en volledige body zien."
+            : "Down-the-line: camera langs handlijn of teenlijn, bal en houding zichtbaar.",
+        done: true
+      },
+      {
+        label: "Framing",
+        text:
+          videoOrientation === "portrait"
+            ? "Portrait gedetecteerd; zorg dat club, handen en finish in beeld blijven."
+            : "Landscape/square gedetecteerd; voldoende ruimte rond club en finish houden.",
+        done: Boolean(videoUrl || cameraStream)
+      },
+      {
+        label: "Address",
+        text: baseline ? "Setup gekalibreerd." : "Zet op address, analyseer frame en tik target-icoon.",
+        done: Boolean(baseline)
+      },
+      {
+        label: "Replay",
+        text: swingWindow ? "Auto-trim en loop klaar." : "Gebruik Auto trim voor fases en instant replay.",
+        done: Boolean(swingWindow)
+      }
+    ],
+    [baseline, cameraStream, cameraView, swingWindow, videoOrientation, videoUrl]
+  );
   const analyzedMetrics = metrics.filter((metric) => metric.score > 0);
   const swingScore = analyzedMetrics.length
     ? Math.round(
@@ -956,6 +1082,14 @@ export default function Home() {
   const weakestMetric = analyzedMetrics
     .filter((metric) => metric.score > 0)
     .sort((a, b) => a.score - b.score)[0];
+  const selectedFocusMetric =
+    focusMetricId === "auto"
+      ? weakestMetric
+      : metrics.find((metric) => metric.id === focusMetricId) ?? weakestMetric;
+  const displayedMetrics =
+    focusMetricId === "auto" ? metrics : metrics.filter((metric) => metric.id === focusMetricId);
+  const bestDelta =
+    bestSwing && swingScore ? swingScore - bestSwing.score : null;
   const activeCheckpointData =
     checkpoints.find((checkpoint) => checkpoint.id === activeCheckpoint) ?? checkpoints[0];
 
@@ -969,11 +1103,15 @@ export default function Home() {
           : "Nog geen score";
 
   const focusDrill = useMemo(() => {
-    switch (weakestMetric?.id) {
+    switch (selectedFocusMetric?.id) {
       case "head-box":
+      case "dtl-head":
         return {
           title: "90% weight-forward reps",
-          detail: "Maak 5 half swings met extra lead-side druk en stop bovenin zonder head-box breach."
+          detail:
+            cameraView === "face-on"
+              ? "Maak 5 half swings met extra lead-side druk en stop bovenin zonder head-box breach."
+              : "Maak 5 rustige half swings en houd je hoofdhoogte constant tot na impact."
         };
       case "lead-arm":
         return {
@@ -981,6 +1119,7 @@ export default function Home() {
           detail: "Sla 6 korte shots met lead arm lang en finish laag, zonder full backswing."
         };
       case "connection":
+      case "dtl-connection":
         return {
           title: "Towel connection",
           detail: "Klem een towel onder beide oksels en maak 8 half swings met borst en armen samen."
@@ -991,9 +1130,20 @@ export default function Home() {
           detail: "Draai de lead shoulder omlaag tot het grip-end naar de bal wijst."
         };
       case "center":
+      case "dtl-hip-depth":
         return {
           title: "Pause-at-top sequence",
           detail: "Pauzeer 1 seconde bovenin en start omlaag met heup/borst, niet met handen."
+        };
+      case "dtl-posture":
+        return {
+          title: "Posture hold reps",
+          detail: "Maak 6 langzame swings tot impact terwijl je heupdiepte en borsthoek behoudt."
+        };
+      case "dtl-hands":
+        return {
+          title: "Hands-deep takeaway",
+          detail: "Maak 8 takeaways waarbij handen dieper worden door borstturn, niet door losse armen."
         };
       default:
         return {
@@ -1001,7 +1151,7 @@ export default function Home() {
           detail: "Zet de video op address, kalibreer, ga naar top/impact en analyseer opnieuw."
         };
     }
-  }, [weakestMetric]);
+  }, [cameraView, selectedFocusMetric]);
 
   const setVideoSource = useCallback((url: string, name: string, blob: Blob | null = null) => {
     setVideoUrl((previousUrl) => {
@@ -1018,6 +1168,7 @@ export default function Home() {
     setBaseline(null);
     setMotionTrace([]);
     setSwingWindow(null);
+    setSwingPhases([]);
     setTrackProgress(0);
     setTrimProgress(0);
     drawPose(canvasRef.current, null, null);
@@ -1308,6 +1459,7 @@ export default function Home() {
       }
 
       setSwingWindow(detectedWindow);
+      setSwingPhases(buildSwingPhases(detectedWindow, cameraView));
       setIsLoopingWindow(true);
       setSpeed(0.5);
       await waitForSeek(video, detectedWindow.start);
@@ -1329,7 +1481,7 @@ export default function Home() {
     } finally {
       setIsTrimming(false);
     }
-  }, [baseline, cameraStream, duration, loadPose]);
+  }, [baseline, cameraStream, cameraView, duration, loadPose]);
 
   const saveBestSwing = useCallback(async () => {
     if (!currentVideoBlob || !videoUrl) {
@@ -1478,6 +1630,13 @@ export default function Home() {
     seekTo(video.currentTime + FRAME_STEP_SECONDS * direction);
   };
 
+  const jumpToPhase = (phase: SwingPhase) => {
+    const checkpointId =
+      phase.id === "address" ? "setup" : phase.id === "finish" ? "impact" : phase.id;
+    setActiveCheckpoint(checkpointId);
+    seekTo(phase.time);
+  };
+
   const openMobileCamera = () => {
     setPoseStatus("Gebruik bij voorkeur landscape, face-on, volledig lichaam en club in beeld.");
     captureRef.current?.click();
@@ -1575,6 +1734,7 @@ export default function Home() {
     setBaseline(null);
     setMotionTrace([]);
     setSwingWindow(null);
+    setSwingPhases([]);
     setTrackProgress(0);
     setTrimProgress(0);
     setPoseStatus("Analyse gereset.");
@@ -1593,7 +1753,10 @@ export default function Home() {
       }),
       club,
       score: swingScore,
-      focus: weakestMetric?.label ?? activeCheckpointData.label,
+      focus: selectedFocusMetric?.label ?? activeCheckpointData.label,
+      shot: shotResult,
+      cameraView,
+      confidence: confidenceScore,
       cue: notes.trim() || undefined
     };
     const next = [entry, ...sessions].slice(0, 8);
@@ -1821,6 +1984,21 @@ export default function Home() {
                     </button>
                   </div>
                 </div>
+                {swingPhases.length ? (
+                  <div className="phase-jump-strip">
+                    {swingPhases.map((phase) => (
+                      <button
+                        className="phase-jump-btn"
+                        type="button"
+                        key={phase.id}
+                        onClick={() => jumpToPhase(phase)}
+                      >
+                        <strong>{phase.label}</strong>
+                        <span>{formatTime(phase.time)}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
 
               <div className="video-stage">
@@ -1963,6 +2141,19 @@ export default function Home() {
                 />
               </div>
             </div>
+            <div className="setup-wizard">
+              {setupItems.map((item) => (
+                <div className="setup-item" key={item.label}>
+                  <span className={`setup-dot ${item.done ? "setup-dot-done" : ""}`}>
+                    {item.done ? <CheckCircle2 size={14} /> : <CircleAlert size={14} />}
+                  </span>
+                  <div>
+                    <strong>{item.label}</strong>
+                    <span>{item.text}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
             <div className="mobile-capture">
               <div>
                 <strong>Mobiele opname</strong>
@@ -2017,10 +2208,26 @@ export default function Home() {
                 <div className="score-copy">
                   <h3>{scoreLabel}</h3>
                   <p>
-                    Focus nu op <strong>{weakestMetric?.label ?? "setup calibratie"}</strong>. De app stuurt op
+                    Focus nu op <strong>{selectedFocusMetric?.label ?? "setup calibratie"}</strong>. De app stuurt op
                     stabiel centrum, connected arms en body-release door impact.
                   </p>
+                  {bestDelta !== null ? (
+                    <p className="delta-line">
+                      Beste swing vergelijking: {bestDelta >= 0 ? "+" : ""}
+                      {bestDelta} punten.
+                    </p>
+                  ) : null}
                 </div>
+              </div>
+              <div className="confidence-strip">
+                <div>
+                  <strong>{confidenceLabel}</strong>
+                  <span>analyse vertrouwen</span>
+                </div>
+                <div className="confidence-meter" aria-label={`Analyse vertrouwen ${confidenceScore}`}>
+                  <span style={{ "--value": `${confidenceScore}%` } as CSSProperties} />
+                </div>
+                <small>{confidenceScore}%</small>
               </div>
             </div>
           </section>
@@ -2036,8 +2243,26 @@ export default function Home() {
               </div>
             </div>
             <div className="panel-body">
+              <div className="focus-row">
+                <div className="field">
+                  <label htmlFor="focus-metric">Focus mode</label>
+                  <select
+                    id="focus-metric"
+                    className="select"
+                    value={metrics.some((metric) => metric.id === focusMetricId) ? focusMetricId : "auto"}
+                    onChange={(event) => setFocusMetricId(event.target.value)}
+                  >
+                    <option value="auto">Auto: zwakste punt</option>
+                    {metrics.map((metric) => (
+                      <option value={metric.id} key={metric.id}>
+                        Alleen {metric.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
               <div className="metric-list">
-                {metrics.map((metric) => {
+                {displayedMetrics.map((metric) => {
                   const Icon = iconMap[metric.icon];
                   return (
                     <div className="metric-row" key={metric.id}>
@@ -2133,8 +2358,8 @@ export default function Home() {
                   <p>1 issue, 1 drill, opnieuw testen</p>
                 </div>
               </div>
-              <span className={`pill ${weakestMetric?.status === "bad" ? "pill-bad" : "pill-warn"}`}>
-                {weakestMetric?.label ?? "Setup"}
+              <span className={`pill ${selectedFocusMetric?.status === "bad" ? "pill-bad" : "pill-warn"}`}>
+                {selectedFocusMetric?.label ?? "Setup"}
               </span>
             </div>
             <div className="panel-body">
@@ -2203,6 +2428,19 @@ export default function Home() {
               </button>
             </div>
             <div className="panel-body">
+              <div className="shot-result-grid">
+                {shotResults.map((result) => (
+                  <button
+                    className="shot-btn"
+                    type="button"
+                    key={result.id}
+                    aria-pressed={shotResult === result.id}
+                    onClick={() => setShotResult(result.id)}
+                  >
+                    {result.label}
+                  </button>
+                ))}
+              </div>
               <div className="field">
                 <label htmlFor="notes">Feel cue</label>
                 <input
@@ -2221,7 +2459,10 @@ export default function Home() {
                       <div>
                         <strong>{session.club} - {session.date}</strong>
                         <span>
-                          Focus: {session.focus}
+                          Focus: {session.focus} - Shot:{" "}
+                          {shotResults.find((result) => result.id === session.shot)?.label ?? "Geen"} -{" "}
+                          {session.cameraView === "down-the-line" ? "DTL" : "Face-on"} - vertrouwen{" "}
+                          {session.confidence ?? "--"}%
                           {session.cue ? ` - Cue: ${session.cue}` : ""}
                         </span>
                       </div>
