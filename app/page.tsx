@@ -44,6 +44,7 @@ type Handedness = "right" | "left";
 type TargetSide = "left" | "right";
 type CameraView = "face-on" | "down-the-line";
 type MetricStatus = "good" | "warn" | "bad";
+type VideoOrientation = "landscape" | "portrait" | "square";
 
 type Landmark = {
   x: number;
@@ -777,6 +778,7 @@ export default function Home() {
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
+  const [videoOrientation, setVideoOrientation] = useState<VideoOrientation>("landscape");
   const [speed, setSpeed] = useState(0.5);
   const [isPlaying, setIsPlaying] = useState(false);
   const [handedness, setHandedness] = useState<Handedness>("right");
@@ -890,6 +892,7 @@ export default function Home() {
     setCurrentVideoBlob(blob);
     setDuration(0);
     setCurrentTime(0);
+    setVideoOrientation("landscape");
     setIsPlaying(false);
     setLandmarks(null);
     setBaseline(null);
@@ -1294,6 +1297,10 @@ export default function Home() {
     if (!video) return;
     setDuration(video.duration || 0);
     setCurrentTime(video.currentTime || 0);
+    const aspectRatio = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 1.6;
+    setVideoOrientation(
+      aspectRatio < 0.88 ? "portrait" : aspectRatio > 1.12 ? "landscape" : "square"
+    );
     video.playbackRate = speed;
   };
 
@@ -1595,7 +1602,7 @@ export default function Home() {
                     </button>
                   </div>
                 </div>
-                <div className="video-frame">
+                <div className={`video-frame video-frame-${videoOrientation}`}>
                   <video
                     ref={videoRef}
                     src={cameraStream ? undefined : videoUrl}
@@ -1843,7 +1850,7 @@ export default function Home() {
               </div>
               <div>
                 <strong>Beste beeld</strong>
-                <span>Landscape, face-on, telefoon op heup- tot handhoogte, bal en finish volledig in beeld.</span>
+                <span>Portrait mag: face-on, telefoon op heup- tot handhoogte, bal, handen en finish volledig in beeld.</span>
               </div>
               <div>
                 <strong>Snelle loop</strong>

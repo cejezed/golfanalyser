@@ -197,6 +197,18 @@ button {
   background: #101610;
 }
 
+.video-frame-portrait {
+  width: min(100%, 420px);
+  aspect-ratio: 9 / 16;
+  align-self: center;
+}
+
+.video-frame-square {
+  width: min(100%, 560px);
+  aspect-ratio: 1 / 1;
+  align-self: center;
+}
+
 .video-frame video,
 .video-frame iframe {
   position: absolute;
