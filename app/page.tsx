@@ -369,9 +369,13 @@ const buildMotionPath = (
 
 const waitForSeek = (video: HTMLVideoElement, time: number) =>
   new Promise<void>((resolve, reject) => {
+    const maxSeekTime = Number.isFinite(video.duration) ? Math.max(0, video.duration - 0.02) : time;
+    const targetTime = clamp(time, 0, maxSeekTime);
+    let timeoutId: number | null = null;
     const cleanup = () => {
       video.removeEventListener("seeked", handleSeeked);
       video.removeEventListener("error", handleError);
+      if (timeoutId) window.clearTimeout(timeoutId);
     };
     const handleSeeked = () => {
       cleanup();
@@ -384,14 +388,18 @@ const waitForSeek = (video: HTMLVideoElement, time: number) =>
 
     video.addEventListener("seeked", handleSeeked, { once: true });
     video.addEventListener("error", handleError, { once: true });
+    timeoutId = window.setTimeout(() => {
+      cleanup();
+      reject(new Error("Video seek duurde te lang."));
+    }, 3000);
 
-    if (Math.abs(video.currentTime - time) < 0.02 && video.readyState >= 2) {
+    if (Math.abs(video.currentTime - targetTime) < 0.02 && video.readyState >= 2) {
       cleanup();
       window.setTimeout(resolve, 0);
       return;
     }
 
-    video.currentTime = time;
+    video.currentTime = targetTime;
   });
 
 const motionEnergy = (previous: Landmark[] | null, current: Landmark[]) => {
@@ -1154,12 +1162,26 @@ export default function Home() {
   }, [cameraView, selectedFocusMetric]);
 
   const setVideoSource = useCallback((url: string, name: string, blob: Blob | null = null) => {
-    setVideoUrl((previousUrl) => {
-      if (previousUrl.startsWith("blob:")) URL.revokeObjectURL(previousUrl);
-      return url;
+    setCameraStream((stream) => {
+      stream?.getTracks().forEach((track) => track.stop());
+      return null;
     });
+    if (timerRef.current) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (recordStopRef.current) {
+      window.clearTimeout(recordStopRef.current);
+      recordStopRef.current = null;
+    }
+    setVideoUrl(url);
     setVideoName(name);
     setCurrentVideoBlob(blob);
+    setIsRecording(false);
+    setIsAnalyzing(false);
+    setIsTracking(false);
+    setIsTrimming(false);
+    setRecordingSeconds(0);
     setDuration(0);
     setCurrentTime(0);
     setVideoOrientation("landscape");
@@ -1219,12 +1241,24 @@ export default function Home() {
 
   useEffect(() => {
     return () => {
-      if (videoUrl.startsWith("blob:")) URL.revokeObjectURL(videoUrl);
       if (timerRef.current) window.clearInterval(timerRef.current);
-      cameraStream?.getTracks().forEach((track) => track.stop());
+      if (recordStopRef.current) window.clearTimeout(recordStopRef.current);
       poseRef.current?.close?.();
+      poseRef.current = null;
     };
-  }, [cameraStream, videoUrl]);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (videoUrl.startsWith("blob:")) URL.revokeObjectURL(videoUrl);
+    };
+  }, [videoUrl]);
+
+  useEffect(() => {
+    return () => {
+      cameraStream?.getTracks().forEach((track) => track.stop());
+    };
+  }, [cameraStream]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -1605,6 +1639,9 @@ export default function Home() {
         (video.currentTime < swingWindow.start || video.currentTime >= swingWindow.end - 0.04)
       ) {
         video.currentTime = swingWindow.start;
+      } else if (!swingWindow && duration && video.currentTime >= duration - 0.04) {
+        video.currentTime = 0;
+        setCurrentTime(0);
       }
       await video.play();
       setIsPlaying(true);
@@ -1888,12 +1925,13 @@ export default function Home() {
                 <div className={`video-frame video-frame-${videoOrientation}`}>
                   <video
                     ref={videoRef}
-                    src={cameraStream ? undefined : videoUrl}
+                    src={!cameraStream && videoUrl ? videoUrl : undefined}
                     playsInline
                     onLoadedMetadata={handleLoadedMetadata}
                     onTimeUpdate={handleTimeUpdate}
                     onPlay={() => setIsPlaying(true)}
                     onPause={() => setIsPlaying(false)}
+                    onEnded={() => setIsPlaying(false)}
                     style={{ display: videoUrl || cameraStream ? "block" : "none" }}
                   />
                   <canvas ref={canvasRef} className="overlay-canvas" />
