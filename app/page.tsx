@@ -234,6 +234,34 @@ const iconMap = {
   center: Target
 };
 
+const VIDEO_FILE_ACCEPT = [
+  "video/*",
+  ".mp4",
+  ".m4v",
+  ".mov",
+  ".qt",
+  ".webm",
+  ".ogv",
+  ".ogg",
+  ".3gp",
+  ".3gpp",
+  ".avi",
+  ".mkv"
+].join(",");
+
+const getFileExtension = (name: string) => {
+  const match = name.toLowerCase().match(/\.[a-z0-9]+$/);
+  return match?.[0] ?? "";
+};
+
+const describeSelectedFileType = (file: File) => {
+  const extension = getFileExtension(file.name);
+  if (file.type && extension) return `${file.type}, ${extension}`;
+  if (file.type) return file.type;
+  if (extension) return `${extension} bestand`;
+  return "onbekend type";
+};
+
 const formatTime = (seconds: number) => {
   if (!Number.isFinite(seconds)) return "0:00";
   const mins = Math.floor(seconds / 60);
@@ -259,7 +287,7 @@ const describeVideoError = (video: HTMLVideoElement | null) => {
     case 3:
       return "De browser kan deze video niet decoderen. Probeer MP4 met H.264.";
     case 4:
-      return "Dit videoformaat wordt niet ondersteund door deze browser. Probeer MP4 met H.264 of WebM.";
+      return "De browser kon dit videobestand niet afspelen. Probeer MP4/H.264, MOV/H.264 of WebM; iPhone HEVC/H.265 werkt niet op elk apparaat.";
     default:
       return error.message || "Video kon niet worden geladen.";
   }
@@ -1644,7 +1672,7 @@ export default function Home() {
       file.type && !support
         ? " Browser meldt geen directe support voor dit formaat; als hij zwart blijft, exporteer als MP4/H.264 of WebM."
         : "";
-    const fileType = file.type || "onbekend type";
+    const fileType = describeSelectedFileType(file);
     const loadMessage = `${file.name} (${fileType}, ${formatFileSize(
       file.size
     )}) geselecteerd. Metadata laden...${compatibilityNote}`;
@@ -1916,14 +1944,14 @@ export default function Home() {
         ref={fileRef}
         className="file-input"
         type="file"
-        accept="video/*"
+        accept={VIDEO_FILE_ACCEPT}
         onChange={handleFileChange}
       />
       <input
         ref={captureRef}
         className="file-input"
         type="file"
-        accept="video/*"
+        accept={VIDEO_FILE_ACCEPT}
         capture="environment"
         onChange={handleFileChange}
       />
@@ -2049,7 +2077,7 @@ export default function Home() {
                       <div>
                         <strong>
                           {videoLoadState === "error"
-                            ? "Video niet bruikbaar"
+                            ? "Video kan niet afspelen"
                             : videoLoadState === "metadata"
                               ? "Eerste frame laden"
                               : "Video laden"}
