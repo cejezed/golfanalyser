@@ -45,6 +45,7 @@ type TargetSide = "left" | "right";
 type CameraView = "face-on" | "down-the-line";
 type MetricStatus = "good" | "warn" | "bad";
 type VideoOrientation = "landscape" | "portrait" | "square";
+type VideoLoadState = "empty" | "selected" | "loading" | "metadata" | "ready" | "error";
 type ShotResult = "unknown" | "brilliant" | "straight" | "fat" | "thin" | "push" | "pull" | "slice";
 
 type Landmark = {
@@ -238,6 +239,30 @@ const formatTime = (seconds: number) => {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${mins}:${secs.toString().padStart(2, "0")}`;
+};
+
+const formatFileSize = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "onbekende grootte";
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+};
+
+const describeVideoError = (video: HTMLVideoElement | null) => {
+  const error = video?.error;
+  if (!error) return "Video kon niet worden geladen.";
+
+  switch (error.code) {
+    case 1:
+      return "Video laden is afgebroken.";
+    case 2:
+      return "Netwerk- of bestandsfout tijdens het laden van de video.";
+    case 3:
+      return "De browser kan deze video niet decoderen. Probeer MP4 met H.264.";
+    case 4:
+      return "Dit videoformaat wordt niet ondersteund door deze browser. Probeer MP4 met H.264 of WebM.";
+    default:
+      return error.message || "Video kon niet worden geladen.";
+  }
 };
 
 const clamp = (value: number, min = 0, max = 100) =>
@@ -986,6 +1011,8 @@ export default function Home() {
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [videoOrientation, setVideoOrientation] = useState<VideoOrientation>("landscape");
+  const [videoLoadState, setVideoLoadState] = useState<VideoLoadState>("empty");
+  const [videoLoadMessage, setVideoLoadMessage] = useState("Geen video geladen.");
   const [speed, setSpeed] = useState(0.5);
   const [isPlaying, setIsPlaying] = useState(false);
   const [handedness, setHandedness] = useState<Handedness>("right");
@@ -1100,6 +1127,9 @@ export default function Home() {
     bestSwing && swingScore ? swingScore - bestSwing.score : null;
   const activeCheckpointData =
     checkpoints.find((checkpoint) => checkpoint.id === activeCheckpoint) ?? checkpoints[0];
+  const isUploadedVideoReady = Boolean(videoUrl && videoLoadState === "ready" && duration);
+  const canUseVideo = Boolean(cameraStream || isUploadedVideoReady);
+  const canScanRecordedVideo = Boolean(videoUrl && videoLoadState === "ready" && duration);
 
   const scoreLabel =
     swingScore >= 78
@@ -1161,7 +1191,12 @@ export default function Home() {
     }
   }, [cameraView, selectedFocusMetric]);
 
-  const setVideoSource = useCallback((url: string, name: string, blob: Blob | null = null) => {
+  const setVideoSource = useCallback((
+    url: string,
+    name: string,
+    blob: Blob | null = null,
+    loadMessage = "Video geselecteerd. Metadata laden..."
+  ) => {
     setCameraStream((stream) => {
       stream?.getTracks().forEach((track) => track.stop());
       return null;
@@ -1177,6 +1212,8 @@ export default function Home() {
     setVideoUrl(url);
     setVideoName(name);
     setCurrentVideoBlob(blob);
+    setVideoLoadState("selected");
+    setVideoLoadMessage(loadMessage);
     setIsRecording(false);
     setIsAnalyzing(false);
     setIsTracking(false);
@@ -1272,11 +1309,19 @@ export default function Home() {
     video.srcObject = cameraStream;
     if (cameraStream) {
       video.muted = true;
+      setVideoLoadState("loading");
+      setVideoLoadMessage("Live camera starten...");
       void video.play();
     } else {
       video.muted = false;
     }
   }, [cameraStream]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || cameraStream || !videoUrl) return;
+    video.load();
+  }, [cameraStream, videoUrl]);
 
   const loadPose = useCallback(async () => {
     if (poseRef.current) return poseRef.current;
@@ -1593,21 +1638,78 @@ export default function Home() {
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    setVideoSource(URL.createObjectURL(file), file.name, file);
+
+    const support = file.type ? document.createElement("video").canPlayType(file.type) : "";
+    const compatibilityNote =
+      file.type && !support
+        ? " Browser meldt geen directe support voor dit formaat; als hij zwart blijft, exporteer als MP4/H.264 of WebM."
+        : "";
+    const fileType = file.type || "onbekend type";
+    const loadMessage = `${file.name} (${fileType}, ${formatFileSize(
+      file.size
+    )}) geselecteerd. Metadata laden...${compatibilityNote}`;
+
+    setVideoSource(URL.createObjectURL(file), file.name, file, loadMessage);
     event.target.value = "";
-    setPoseStatus("Mobiele video geladen. Zet naar address, analyseer en kalibreer setup.");
+    setPoseStatus("Video geselecteerd. De app leest nu metadata en het eerste frame.");
+  };
+
+  const handleVideoLoadStart = () => {
+    if (!videoUrl && !cameraStream) return;
+    setVideoLoadState("loading");
+    setVideoLoadMessage(
+      cameraStream ? "Live camera laden..." : "Video laden; metadata en eerste frame worden gelezen..."
+    );
   };
 
   const handleLoadedMetadata = () => {
     const video = videoRef.current;
     if (!video) return;
-    setDuration(video.duration || 0);
+    const nextDuration = Number.isFinite(video.duration) ? video.duration : 0;
+    setDuration(nextDuration);
     setCurrentTime(video.currentTime || 0);
     const aspectRatio = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 1.6;
     setVideoOrientation(
       aspectRatio < 0.88 ? "portrait" : aspectRatio > 1.12 ? "landscape" : "square"
     );
     video.playbackRate = speed;
+    setVideoLoadState("metadata");
+    setVideoLoadMessage(
+      `Metadata gelezen: ${video.videoWidth || "?"}x${video.videoHeight || "?"}, ${formatTime(
+        nextDuration
+      )}. Eerste frame laden...`
+    );
+    setPoseStatus("Video metadata gelezen. Wacht tot het eerste frame zichtbaar is.");
+  };
+
+  const handleVideoReady = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    const becameReady = videoLoadState !== "ready";
+    const nextDuration = Number.isFinite(video.duration) ? video.duration : duration;
+    setDuration(nextDuration || 0);
+    setCurrentTime(video.currentTime || 0);
+    setVideoLoadState("ready");
+    setVideoLoadMessage(
+      `Video klaar: ${formatTime(nextDuration || 0)}. Zet hem op address, klik Analyseer en kalibreer setup.`
+    );
+    if (becameReady) {
+      setPoseStatus("Video klaar. Zet naar address, klik Analyseer en kalibreer setup.");
+    }
+  };
+
+  const handleVideoWaiting = () => {
+    if (!videoUrl && !cameraStream) return;
+    if (videoLoadState === "ready") return;
+    setVideoLoadState("loading");
+    setVideoLoadMessage("Video wacht op data of codec-decoding...");
+  };
+
+  const handleVideoError = () => {
+    const message = describeVideoError(videoRef.current);
+    setVideoLoadState("error");
+    setVideoLoadMessage(message);
+    setPoseStatus(message);
   };
 
   const handleTimeUpdate = () => {
@@ -1632,7 +1734,7 @@ export default function Home() {
 
   const togglePlay = async () => {
     const video = videoRef.current;
-    if (!video || (!videoUrl && !cameraStream)) return;
+    if (!video || !canUseVideo) return;
     if (video.paused) {
       if (
         swingWindow &&
@@ -1859,7 +1961,7 @@ export default function Home() {
             className="btn btn-primary"
             type="button"
             onClick={() => void analyzeFrame()}
-            disabled={isAnalyzing || isPoseLoading || isTracking || isTrimming || (!videoUrl && !cameraStream)}
+            disabled={isAnalyzing || isPoseLoading || isTracking || isTrimming || !canUseVideo}
           >
             <ScanLine size={16} />
             {isAnalyzing || isPoseLoading ? "Analyseren" : "Analyseer"}
@@ -1868,7 +1970,7 @@ export default function Home() {
             className="btn"
             type="button"
             onClick={() => void autoTrimSwing()}
-            disabled={isTrimming || isTracking || isPoseLoading || !videoUrl || !duration}
+            disabled={isTrimming || isTracking || isPoseLoading || !canScanRecordedVideo}
           >
             <Scissors size={16} />
             {isTrimming ? `${trimProgress}%` : "Auto trim"}
@@ -1877,7 +1979,7 @@ export default function Home() {
             className="btn"
             type="button"
             onClick={() => void trackSwingMotion()}
-            disabled={isTracking || isTrimming || isPoseLoading || !videoUrl || !duration}
+            disabled={isTracking || isTrimming || isPoseLoading || !canScanRecordedVideo}
           >
             <Activity size={16} />
             {isTracking ? `${trackProgress}%` : "Track beweging"}
@@ -1909,7 +2011,7 @@ export default function Home() {
                       className="btn icon-btn"
                       type="button"
                       onClick={() => void saveBestSwing()}
-                      disabled={!currentVideoBlob}
+                      disabled={!currentVideoBlob || videoLoadState === "error"}
                       title="Markeer als beste swing"
                     >
                       <Star size={16} />
@@ -1926,8 +2028,15 @@ export default function Home() {
                   <video
                     ref={videoRef}
                     src={!cameraStream && videoUrl ? videoUrl : undefined}
+                    preload="auto"
                     playsInline
+                    onLoadStart={handleVideoLoadStart}
                     onLoadedMetadata={handleLoadedMetadata}
+                    onLoadedData={handleVideoReady}
+                    onCanPlay={handleVideoReady}
+                    onWaiting={handleVideoWaiting}
+                    onStalled={handleVideoWaiting}
+                    onError={handleVideoError}
                     onTimeUpdate={handleTimeUpdate}
                     onPlay={() => setIsPlaying(true)}
                     onPause={() => setIsPlaying(false)}
@@ -1935,6 +2044,20 @@ export default function Home() {
                     style={{ display: videoUrl || cameraStream ? "block" : "none" }}
                   />
                   <canvas ref={canvasRef} className="overlay-canvas" />
+                  {(videoUrl || cameraStream) && videoLoadState !== "ready" ? (
+                    <div className={`video-load-overlay video-load-${videoLoadState}`}>
+                      <div>
+                        <strong>
+                          {videoLoadState === "error"
+                            ? "Video niet bruikbaar"
+                            : videoLoadState === "metadata"
+                              ? "Eerste frame laden"
+                              : "Video laden"}
+                        </strong>
+                        <span>{videoLoadMessage}</span>
+                      </div>
+                    </div>
+                  ) : null}
                   {!videoUrl && !cameraStream ? (
                     <div className="empty-video">
                       <div>
@@ -1944,15 +2067,48 @@ export default function Home() {
                     </div>
                   ) : null}
                 </div>
+                <div className={`video-load-status video-load-${videoLoadState}`}>
+                  <span className="video-status-dot" aria-hidden="true" />
+                  <div>
+                    <strong>
+                      {videoLoadState === "ready"
+                        ? "Video klaar"
+                        : videoLoadState === "error"
+                          ? "Video fout"
+                          : videoLoadState === "empty"
+                            ? "Geen video"
+                            : "Video laden"}
+                    </strong>
+                    <span>{videoLoadMessage}</span>
+                  </div>
+                </div>
                 <div className="controls-strip">
                   <div className="toolbar">
-                    <button className="btn icon-btn" type="button" onClick={togglePlay} title="Play/pause">
+                    <button
+                      className="btn icon-btn"
+                      type="button"
+                      onClick={togglePlay}
+                      disabled={!canUseVideo}
+                      title="Play/pause"
+                    >
                       {isPlaying ? <Pause size={16} /> : <Play size={16} />}
                     </button>
-                    <button className="btn icon-btn" type="button" onClick={() => stepFrame(-1)} title="Frame terug">
+                    <button
+                      className="btn icon-btn"
+                      type="button"
+                      onClick={() => stepFrame(-1)}
+                      disabled={!canUseVideo}
+                      title="Frame terug"
+                    >
                       <ChevronLeft size={16} />
                     </button>
-                    <button className="btn icon-btn" type="button" onClick={() => stepFrame(1)} title="Frame vooruit">
+                    <button
+                      className="btn icon-btn"
+                      type="button"
+                      onClick={() => stepFrame(1)}
+                      disabled={!canUseVideo}
+                      title="Frame vooruit"
+                    >
                       <ChevronRight size={16} />
                     </button>
                   </div>
@@ -1965,7 +2121,7 @@ export default function Home() {
                     value={currentTime}
                     onChange={(event) => seekTo(Number(event.target.value))}
                     aria-label="Video scrubber"
-                    disabled={!duration}
+                    disabled={!duration || videoLoadState === "error"}
                   />
                   <div className="speed-control">
                     <span>{formatTime(currentTime)} / {formatTime(duration)}</span>
@@ -2006,7 +2162,7 @@ export default function Home() {
                       className="btn"
                       type="button"
                       onClick={() => void autoTrimSwing()}
-                      disabled={isTrimming || isTracking || isPoseLoading || !videoUrl || !duration}
+                      disabled={isTrimming || isTracking || isPoseLoading || !canScanRecordedVideo}
                     >
                       <Scissors size={16} />
                       {isTrimming ? `${trimProgress}%` : "Trim"}
@@ -2015,7 +2171,7 @@ export default function Home() {
                       className="btn"
                       type="button"
                       onClick={() => void saveBestSwing()}
-                      disabled={!currentVideoBlob}
+                      disabled={!currentVideoBlob || videoLoadState === "error"}
                     >
                       <Star size={16} />
                       Beste
@@ -2337,7 +2493,7 @@ export default function Home() {
                 className="btn"
                 type="button"
                 onClick={() => void trackSwingMotion()}
-                disabled={isTracking || isPoseLoading || !videoUrl || !duration}
+                disabled={isTracking || isPoseLoading || !canScanRecordedVideo}
               >
                 <Activity size={16} />
                 {isTracking ? `${trackProgress}%` : "Track"}

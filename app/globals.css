@@ -249,6 +249,78 @@ button {
   font-size: 13px;
 }
 
+.video-load-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  color: #eef6ed;
+  text-align: center;
+  background: rgba(16, 22, 16, 0.72);
+}
+
+.video-load-overlay strong {
+  display: block;
+  margin-bottom: 6px;
+  color: #fff;
+}
+
+.video-load-overlay span {
+  display: block;
+  max-width: 34rem;
+  color: #c9d7c6;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.video-load-status {
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  gap: 9px;
+  align-items: start;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+}
+
+.video-load-status strong {
+  display: block;
+  font-size: 12px;
+}
+
+.video-load-status span {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.video-status-dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--amber);
+}
+
+.video-load-ready .video-status-dot {
+  background: var(--green);
+}
+
+.video-load-error {
+  border-color: #e1aaa5;
+  background: #fff7f6;
+}
+
+.video-load-error .video-status-dot {
+  background: var(--red);
+}
+
 .toolbar {
   display: flex;
   align-items: center;
