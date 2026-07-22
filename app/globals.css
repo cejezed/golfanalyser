@@ -1098,3 +1098,731 @@ button {
     grid-column: 1 / -1;
   }
 }
+/* Guided personal coach flow */
+.coach-app {
+  background:
+    radial-gradient(circle at 10% 0%, rgba(47, 125, 79, 0.08), transparent 28rem),
+    var(--bg);
+}
+
+.coach-topbar {
+  padding-block: 12px;
+}
+
+.flow-shell {
+  width: min(1480px, 100%);
+  margin: 0 auto;
+  padding: 18px 22px 36px;
+}
+
+.flow-progress {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  max-width: 760px;
+  margin: 0 auto 18px;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 8px 24px rgba(26, 36, 29, 0.05);
+}
+
+.flow-progress-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.flow-progress-item > span {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: #fff;
+  font-weight: 760;
+}
+
+.flow-progress-item.is-active {
+  color: var(--green-dark);
+  background: #eef7f0;
+}
+
+.flow-progress-item.is-active > span,
+.flow-progress-item.is-done > span {
+  border-color: var(--green-dark);
+  color: #fff;
+  background: var(--green-dark);
+}
+
+.flow-progress-item.is-done {
+  color: var(--green-dark);
+}
+
+.coach-grid {
+  display: grid;
+  grid-template-columns: minmax(520px, 1.15fr) minmax(400px, 0.85fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.coach-grid .panel {
+  border-radius: 14px;
+  box-shadow: 0 14px 38px rgba(26, 36, 29, 0.08);
+}
+
+.guided-video-body {
+  display: grid;
+  gap: 12px;
+}
+
+.coach-empty-video > div {
+  max-width: 35rem;
+}
+
+.coach-empty-video svg {
+  margin-bottom: 12px;
+  color: #9ec1a7;
+}
+
+.empty-video-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.capture-guide {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.capture-guide > div {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 58px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.capture-guide svg {
+  flex: 0 0 auto;
+  color: var(--green);
+}
+
+.coach-status {
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  gap: 9px;
+  align-items: start;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfcfa;
+}
+
+.coach-status strong,
+.coach-status span {
+  display: block;
+  font-size: 12px;
+}
+
+.coach-status div > span {
+  margin-top: 2px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.coach-controls {
+  grid-template-columns: auto minmax(120px, 1fr) auto;
+  border-radius: 10px;
+}
+
+.coach-app .btn {
+  min-height: 42px;
+  border-radius: 9px;
+}
+
+.coach-app .icon-btn {
+  width: 42px;
+  min-width: 42px;
+}
+
+.btn-large {
+  min-height: 48px !important;
+  padding-inline: 16px;
+}
+
+.preflight-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fbfcfa;
+}
+
+.preflight-grid .select,
+.session-fields .input {
+  min-height: 42px;
+}
+
+.next-action-card {
+  padding: 16px;
+  border: 1px solid #b8d4bf;
+  border-radius: 13px;
+  background: linear-gradient(145deg, #f2faf3, #fbfdf9);
+}
+
+.step-kicker {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--green-dark);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.next-action-card h3,
+.coach-welcome h3,
+.pending-feedback h3,
+.session-capture h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.next-action-card > p,
+.coach-welcome > p,
+.pending-feedback > p,
+.session-capture-head p {
+  margin: 7px 0 14px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.checkpoint-picker {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.checkpoint-choice {
+  min-height: 70px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  padding: 10px;
+  text-align: left;
+}
+
+.checkpoint-choice strong,
+.checkpoint-choice span {
+  display: block;
+}
+
+.checkpoint-choice strong {
+  font-size: 13px;
+}
+
+.checkpoint-choice span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.checkpoint-choice[aria-pressed="true"] {
+  border-color: var(--green-dark);
+  color: var(--green-dark);
+  background: #eaf6ed;
+  box-shadow: inset 0 0 0 1px var(--green-dark);
+}
+
+.primary-action-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.analysis-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px 12px;
+  border-radius: 10px;
+  color: #245d39;
+  background: #edf7ef;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.analysis-message svg {
+  flex: 0 0 auto;
+}
+
+.analysis-message.is-warning {
+  color: #74500f;
+  background: #fff5d9;
+}
+
+.advanced-tools,
+.metric-details {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.advanced-tools > summary,
+.metric-details > summary {
+  cursor: pointer;
+  padding: 12px 14px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.advanced-tools-body,
+.metric-details .metric-list {
+  padding: 0 12px 12px;
+}
+
+.advanced-tools-body {
+  display: grid;
+  gap: 12px;
+}
+
+.helper-copy,
+.disclaimer {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.coach-welcome,
+.pending-feedback {
+  display: grid;
+  justify-items: start;
+  min-height: 290px;
+  align-content: center;
+  padding: 22px;
+  border: 1px dashed #c8d5c7;
+  border-radius: 13px;
+  background: #fbfcfa;
+}
+
+.welcome-icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 16px;
+  border-radius: 12px;
+  color: #fff;
+  background: var(--green-dark);
+}
+
+.welcome-points {
+  width: 100%;
+  display: grid;
+  gap: 8px;
+}
+
+.welcome-points > div {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 9px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.welcome-points strong {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--green-dark);
+  background: #e8f3ea;
+}
+
+.pending-feedback > svg {
+  margin-bottom: 14px;
+  color: var(--green);
+}
+
+.quality-warning {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  color: #7b5412;
+  background: #fff3cf;
+  font-size: 12px;
+}
+
+.result-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.result-score-band {
+  grid-template-columns: 128px 1fr;
+}
+
+.result-score-band .score-ring {
+  width: 128px;
+}
+
+.quality-strip {
+  display: grid;
+  grid-template-columns: minmax(150px, auto) 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfcfa;
+}
+
+.quality-strip strong,
+.quality-strip span {
+  display: block;
+}
+
+.quality-strip strong {
+  font-size: 13px;
+}
+
+.quality-strip div > span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.focus-coach-card {
+  padding: 15px;
+  border: 1px solid #e2bf72;
+  border-radius: 12px;
+  background: #fff9e9;
+}
+
+.focus-coach-card.metric-good {
+  border-color: #a8d0b3;
+  background: #f0f8f2;
+}
+
+.focus-coach-card.metric-bad {
+  border-color: #dfa29c;
+  background: #fff3f1;
+}
+
+.focus-coach-head {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.focus-coach-head > span {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: #fff;
+  background: var(--green-dark);
+}
+
+.focus-coach-head small,
+.focus-coach-head h3 {
+  display: block;
+  margin: 0;
+}
+
+.focus-coach-head small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.focus-coach-head h3 {
+  margin-top: 2px;
+  font-size: 16px;
+}
+
+.focus-coach-card > p {
+  margin: 11px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.drill-callout {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 9px;
+  padding: 11px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.drill-callout strong,
+.drill-callout span {
+  display: block;
+}
+
+.drill-callout strong {
+  font-size: 13px;
+}
+
+.drill-callout span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.session-capture {
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.session-capture-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.session-fields {
+  display: grid;
+  grid-template-columns: 0.7fr 1.3fr;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.compact-shot-grid {
+  margin-bottom: 12px;
+}
+
+.coach-app .shot-btn {
+  min-height: 40px;
+}
+
+.disclosure-panel {
+  overflow: hidden;
+}
+
+.disclosure-summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.disclosure-summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure-summary > svg:last-child {
+  flex: 0 0 auto;
+  transition: transform 160ms ease;
+}
+
+.disclosure-panel[open] .disclosure-summary > svg:last-child {
+  transform: rotate(90deg);
+}
+
+.optional-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.optional-action p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.history-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.best-swing-card {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.8fr) minmax(180px, 1.2fr);
+  gap: 10px;
+}
+
+.best-swing-card video {
+  width: 100%;
+  min-height: 150px;
+  border-radius: 10px;
+  background: #101610;
+}
+
+.reference-link {
+  margin-top: 12px;
+}
+
+.disclaimer {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+@media (max-width: 1040px) {
+  .coach-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .coach-feedback {
+    width: 100%;
+  }
+}
+
+@media (max-width: 720px) {
+  .coach-topbar {
+    position: static;
+  }
+
+  .flow-shell {
+    padding: 10px 12px 24px;
+  }
+
+  .flow-progress {
+    margin-bottom: 10px;
+    padding: 5px;
+  }
+
+  .flow-progress-item {
+    min-height: 38px;
+    gap: 5px;
+  }
+
+  .flow-progress-item strong {
+    display: none;
+  }
+
+  .coach-grid {
+    gap: 12px;
+  }
+
+  .capture-guide,
+  .preflight-grid,
+  .checkpoint-picker,
+  .session-fields,
+  .best-swing-card,
+  .quality-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .capture-guide {
+    gap: 6px;
+  }
+
+  .capture-guide > div {
+    min-height: 44px;
+  }
+
+  .coach-controls {
+    grid-template-columns: auto 1fr;
+  }
+
+  .coach-controls .speed-control {
+    grid-column: 1 / -1;
+    justify-content: space-between;
+  }
+
+  .checkpoint-picker {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .checkpoint-choice {
+    min-height: 56px;
+    text-align: center;
+  }
+
+  .checkpoint-choice span {
+    display: none;
+  }
+
+  .primary-action-row,
+  .empty-video-actions,
+  .session-capture-head,
+  .optional-action {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .primary-action-row .btn,
+  .empty-video-actions .btn,
+  .session-capture > .btn,
+  .optional-action .btn {
+    width: 100%;
+  }
+
+  .coach-welcome,
+  .pending-feedback {
+    min-height: 230px;
+    padding: 18px;
+  }
+
+  .result-score-band {
+    grid-template-columns: 108px 1fr;
+  }
+
+  .result-score-band .score-ring {
+    width: 108px;
+  }
+
+  .focus-coach-head {
+    grid-template-columns: 36px 1fr;
+  }
+
+  .focus-coach-head > strong {
+    grid-column: 2;
+  }
+
+  .metric-row {
+    grid-template-columns: 34px 1fr;
+  }
+
+  .metric-row .meter {
+    grid-column: 2;
+    width: 100%;
+  }
+
+  .shot-result-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .coach-app .shot-btn {
+    min-height: 44px;
+    padding-inline: 4px;
+  }
+}

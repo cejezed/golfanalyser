@@ -10,7 +10,6 @@ import {
   CircleAlert,
   Dumbbell,
   ExternalLink,
-  FileVideo,
   Gauge,
   ListChecks,
   Pause,
@@ -113,12 +112,6 @@ type SwingPhase = {
   label: string;
   time: number;
   cue: string;
-};
-
-type SetupItem = {
-  label: string;
-  text: string;
-  done: boolean;
 };
 
 type MotionPoint = {
@@ -267,6 +260,14 @@ const formatTime = (seconds: number) => {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${mins}:${secs.toString().padStart(2, "0")}`;
+};
+
+const formatPhaseTime = (seconds: number) => {
+  if (!Number.isFinite(seconds)) return "0:00.0";
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  const tenths = Math.floor((seconds % 1) * 10);
+  return `${mins}:${secs.toString().padStart(2, "0")}.${tenths}`;
 };
 
 const formatFileSize = (bytes: number) => {
@@ -494,6 +495,8 @@ const detectSwingWindow = (
   );
   const sortedEnergy = [...activeSamples].map((sample) => sample.energy).sort((a, b) => a - b);
   const median = sortedEnergy[Math.floor(sortedEnergy.length / 2)] ?? 0;
+  const meaningfulSamples = activeSamples.filter((sample) => sample.energy >= 0.012);
+  if (peakSample.energy < 0.012 || meaningfulSamples.length < 3) return null;
   const threshold = Math.max(peakSample.energy * 0.26, median * 1.75, 0.012);
   const peakIndex = samples.findIndex((sample) => sample.time === peakSample.time);
 
@@ -698,7 +701,6 @@ const buildMetrics = (
     const rightHip = current[24];
     const leadShoulder = handedness === "right" ? leftShoulder : rightShoulder;
     const leadElbow = handedness === "right" ? leftElbow : rightElbow;
-    const leadWrist = handedness === "right" ? leftWrist : rightWrist;
     const leadHip = handedness === "right" ? leftHip : rightHip;
     const shoulderMid = midpoint(leftShoulder, rightShoulder);
     const hipMid = midpoint(leftHip, rightHip);
@@ -1049,8 +1051,8 @@ export default function Home() {
   const [club, setClub] = useState("7 iron");
   const [notes, setNotes] = useState("");
   const [shotResult, setShotResult] = useState<ShotResult>("unknown");
-  const [focusMetricId, setFocusMetricId] = useState("auto");
   const [activeCheckpoint, setActiveCheckpoint] = useState(checkpoints[0].id);
+  const [analyzedCheckpoint, setAnalyzedCheckpoint] = useState<string | null>(null);
   const [poseStatus, setPoseStatus] = useState("Pose model nog niet geladen.");
   const [isPoseLoading, setIsPoseLoading] = useState(false);
   const [poseReady, setPoseReady] = useState(false);
@@ -1066,7 +1068,6 @@ export default function Home() {
   const [swingPhases, setSwingPhases] = useState<SwingPhase[]>([]);
   const [isLoopingWindow, setIsLoopingWindow] = useState(true);
   const [bestSwing, setBestSwing] = useState<BestSwing | null>(null);
-  const [referenceMode, setReferenceMode] = useState<"saguto" | "best">("saguto");
   const [sessions, setSessions] = useState<SessionEntry[]>([]);
 
   const metrics = useMemo(
@@ -1091,82 +1092,69 @@ export default function Home() {
     [motionOrigin, motionTrace]
   );
   const poseCoverage = poseCoverageScore(landmarks);
-  const confidenceScore = Math.round(
-    clamp(
-      (videoUrl || cameraStream ? 16 : 0) +
-        (landmarks ? 20 : 0) +
-        poseCoverage * 14 +
-        (baseline ? 18 : 0) +
-        (motionTrace.length >= 12 ? 16 : motionTrace.length ? 8 : 0) +
-        (swingWindow ? 10 : 0) +
-        (videoOrientation === "portrait" || videoOrientation === "landscape" ? 6 : 3)
-    )
+  const analysisQualityScore = landmarks ? Math.round(poseCoverage * 100) : 0;
+  const analysisQualityLabel =
+    analysisQualityScore >= 85
+      ? "Goed beeld"
+      : analysisQualityScore >= 70
+        ? "Bruikbaar beeld"
+        : landmarks
+          ? "Onvoldoende beeld"
+          : "Nog niet gemeten";
+  const activeCheckpointData =
+    checkpoints.find((checkpoint) => checkpoint.id === activeCheckpoint) ?? checkpoints[0];
+  const isUploadedVideoReady = Boolean(videoUrl && videoLoadState === "ready" && duration);
+  const canUseVideo = Boolean(cameraStream || isUploadedVideoReady);
+  const canScanRecordedVideo = Boolean(videoUrl && videoLoadState === "ready" && duration);
+  const analysisReady = Boolean(
+    landmarks &&
+      baseline &&
+      analyzedCheckpoint === activeCheckpoint &&
+      activeCheckpoint !== "setup" &&
+      poseCoverage >= 0.7
   );
-  const confidenceLabel =
-    confidenceScore >= 78 ? "Hoog" : confidenceScore >= 50 ? "Middel" : "Laag";
-  const setupItems: SetupItem[] = useMemo(
-    () => [
-      {
-        label: "Hoek",
-        text:
-          cameraView === "face-on"
-            ? "Face-on: target links/rechts instellen en volledige body zien."
-            : "Down-the-line: camera langs handlijn of teenlijn, bal en houding zichtbaar.",
-        done: true
-      },
-      {
-        label: "Framing",
-        text:
-          videoOrientation === "portrait"
-            ? "Portrait gedetecteerd; zorg dat club, handen en finish in beeld blijven."
-            : "Landscape/square gedetecteerd; voldoende ruimte rond club en finish houden.",
-        done: Boolean(videoUrl || cameraStream)
-      },
-      {
-        label: "Address",
-        text: baseline ? "Setup gekalibreerd." : "Zet op address, analyseer frame en tik target-icoon.",
-        done: Boolean(baseline)
-      },
-      {
-        label: "Replay",
-        text: swingWindow ? "Auto-trim en loop klaar." : "Gebruik Auto trim voor fases en instant replay.",
-        done: Boolean(swingWindow)
+  const phaseMetricIds = useMemo(() => {
+    if (cameraView === "down-the-line") {
+      if (activeCheckpoint === "takeaway") {
+        return ["dtl-head", "dtl-posture", "dtl-hands", "dtl-connection"];
       }
-    ],
-    [baseline, cameraStream, cameraView, swingWindow, videoOrientation, videoUrl]
-  );
-  const analyzedMetrics = metrics.filter((metric) => metric.score > 0);
+      if (activeCheckpoint === "impact") {
+        return ["dtl-head", "dtl-posture", "dtl-hip-depth", "dtl-connection"];
+      }
+      return ["dtl-head", "dtl-posture", "dtl-hip-depth", "dtl-hands", "dtl-connection"];
+    }
+
+    if (activeCheckpoint === "takeaway") {
+      return ["head-box", "connection", "shoulder", "center"];
+    }
+    if (activeCheckpoint === "impact") {
+      return ["head-box", "lead-arm", "connection", "center"];
+    }
+    return ["head-box", "lead-arm", "connection", "shoulder", "center"];
+  }, [activeCheckpoint, cameraView]);
+  const analyzedMetrics = analysisReady
+    ? metrics.filter((metric) => metric.score > 0 && phaseMetricIds.includes(metric.id))
+    : [];
   const swingScore = analyzedMetrics.length
     ? Math.round(
         analyzedMetrics.reduce((total, metric) => total + metric.score, 0) /
           analyzedMetrics.length
       )
     : 0;
-  const weakestMetric = analyzedMetrics
-    .filter((metric) => metric.score > 0)
-    .sort((a, b) => a.score - b.score)[0];
-  const selectedFocusMetric =
-    focusMetricId === "auto"
-      ? weakestMetric
-      : metrics.find((metric) => metric.id === focusMetricId) ?? weakestMetric;
-  const displayedMetrics =
-    focusMetricId === "auto" ? metrics : metrics.filter((metric) => metric.id === focusMetricId);
-  const bestDelta =
-    bestSwing && swingScore ? swingScore - bestSwing.score : null;
-  const activeCheckpointData =
-    checkpoints.find((checkpoint) => checkpoint.id === activeCheckpoint) ?? checkpoints[0];
-  const isUploadedVideoReady = Boolean(videoUrl && videoLoadState === "ready" && duration);
-  const canUseVideo = Boolean(cameraStream || isUploadedVideoReady);
-  const canScanRecordedVideo = Boolean(videoUrl && videoLoadState === "ready" && duration);
+  const weakestMetric = [...analyzedMetrics].sort((a, b) => a.score - b.score)[0];
+  const selectedFocusMetric = weakestMetric;
+  const displayedMetrics = analyzedMetrics;
+  const bestDelta = bestSwing && swingScore && bestSwing.score ? swingScore - bestSwing.score : null;
+  const flowStep = !canUseVideo ? 1 : !baseline ? 2 : !analysisReady ? 3 : 4;
 
   const scoreLabel =
-    swingScore >= 78
-      ? "Connected"
-      : swingScore >= 56
-        ? "Werkbaar"
+    swingScore >= 82
+      ? "Sterke fase"
+      : swingScore >= 65
+        ? "Redelijke basis"
         : swingScore > 0
-          ? "Armsy risico"
-          : "Nog geen score";
+          ? "Duidelijk werkpunt"
+          : "Nog niet gemeten";
 
   const focusDrill = useMemo(() => {
     switch (selectedFocusMetric?.id) {
@@ -1251,7 +1239,11 @@ export default function Home() {
     setCurrentTime(0);
     setVideoOrientation("landscape");
     setIsPlaying(false);
+    setActiveCheckpoint("setup");
+    setAnalyzedCheckpoint(null);
     setLandmarks(null);
+    setAnalyzedCheckpoint(null);
+    setActiveCheckpoint("setup");
     setBaseline(null);
     setMotionTrace([]);
     setSwingWindow(null);
@@ -1406,34 +1398,37 @@ export default function Home() {
       const video = videoRef.current;
       if (!video || video.readyState < 2) {
         setPoseStatus("Geen bruikbaar videoframe gevonden.");
-        return;
+        return null;
       }
       if (showBusy) setIsAnalyzing(true);
       const pose = await loadPose();
       if (!pose) {
         if (showBusy) setIsAnalyzing(false);
-        return;
+        return null;
       }
 
       try {
         const result = pose.detectForVideo(video, performance.now());
         const firstPose = result.landmarks?.[0] ?? null;
         setLandmarks(firstPose);
+        setAnalyzedCheckpoint(firstPose ? activeCheckpoint : null);
         drawPose(canvasRef.current, firstPose, baseline, motionTrace);
         setPoseStatus(
           firstPose
-            ? `Frame geanalyseerd op ${formatTime(video.currentTime)}.`
-            : "Geen lichaam gevonden; gebruik face-on video met volledig lichaam in beeld."
+            ? `${activeCheckpointData.label} geanalyseerd op ${formatPhaseTime(video.currentTime)}.`
+            : "Geen lichaam gevonden. Zorg dat hoofd, handen, heupen en voeten volledig in beeld zijn."
         );
+        return firstPose;
       } catch (error) {
         setPoseStatus(
           error instanceof Error ? `Analyse mislukt: ${error.message}` : "Analyse mislukt."
         );
+        return null;
       } finally {
         if (showBusy) setIsAnalyzing(false);
       }
     },
-    [baseline, loadPose, motionTrace]
+    [activeCheckpoint, activeCheckpointData.label, baseline, loadPose, motionTrace]
   );
 
   const trackSwingMotion = useCallback(async () => {
@@ -1444,6 +1439,7 @@ export default function Home() {
     }
 
     setIsTracking(true);
+    setAnalyzedCheckpoint(null);
     setTrackProgress(0);
     const pose = await loadPose();
     if (!pose) {
@@ -1510,6 +1506,7 @@ export default function Home() {
     }
 
     setIsTrimming(true);
+    setAnalyzedCheckpoint(null);
     setTrimProgress(0);
     const pose = await loadPose();
     if (!pose) {
@@ -1554,13 +1551,19 @@ export default function Home() {
         }
       }
 
-      const detectedWindow = detectSwingWindow(energySamples, duration);
+      const minimumPoseSamples = Math.max(8, Math.ceil(sampleCount * 0.35));
+      const detectedWindow =
+        nextTrace.length >= minimumPoseSamples ? detectSwingWindow(energySamples, duration) : null;
       setMotionTrace(nextTrace);
 
       if (!detectedWindow) {
         await waitForSeek(video, originalTime);
         setCurrentTime(originalTime);
-        setPoseStatus("Auto-trim vond geen duidelijke swingbeweging. Probeer korter te filmen.");
+        setPoseStatus(
+          nextTrace.length < minimumPoseSamples
+            ? "Fases niet gevonden: het lichaam was in te weinig frames volledig zichtbaar."
+            : "Fases niet gevonden: er was te weinig duidelijke swingbeweging. Film een korte swing."
+        );
         drawPose(canvasRef.current, lastPose, baseline, nextTrace);
         return;
       }
@@ -1577,9 +1580,9 @@ export default function Home() {
       drawPose(canvasRef.current, restoredPose, baseline, nextTrace);
 
       setPoseStatus(
-        `Auto-trim klaar: ${formatTime(detectedWindow.start)}-${formatTime(
+        `Fases gevonden: ${formatPhaseTime(detectedWindow.start)}-${formatPhaseTime(
           detectedWindow.end
-        )}. Loop staat aan voor instant replay.`
+        )}. De herhaal-lus staat aan.`
       );
     } catch (error) {
       setPoseStatus(
@@ -1591,8 +1594,8 @@ export default function Home() {
   }, [baseline, cameraStream, cameraView, duration, loadPose]);
 
   const saveBestSwing = useCallback(async () => {
-    if (!currentVideoBlob || !videoUrl) {
-      setPoseStatus("Geen lokale video beschikbaar om als beste swing op te slaan.");
+    if (!currentVideoBlob || !videoUrl || !analysisReady || !swingScore) {
+      setPoseStatus("Analyseer eerst een geldige swingfase voordat je deze als beste opslaat.");
       return;
     }
 
@@ -1621,7 +1624,6 @@ export default function Home() {
     };
 
     setBestSwing(nextBest);
-    setReferenceMode("best");
     setPoseStatus("Beste swing opgeslagen als lokale referentie.");
 
     if (window.indexedDB) {
@@ -1633,6 +1635,7 @@ export default function Home() {
     }
   }, [
     activeCheckpointData.label,
+    analysisReady,
     currentVideoBlob,
     swingScore,
     swingWindow,
@@ -1643,7 +1646,6 @@ export default function Home() {
 
   const clearBestSwing = useCallback(async () => {
     setBestSwing(null);
-    setReferenceMode("saguto");
     setPoseStatus("Beste swing referentie gewist.");
 
     if (window.indexedDB) {
@@ -1719,10 +1721,10 @@ export default function Home() {
     setCurrentTime(video.currentTime || 0);
     setVideoLoadState("ready");
     setVideoLoadMessage(
-      `Video klaar: ${formatTime(nextDuration || 0)}. Zet hem op address, klik Analyseer en kalibreer setup.`
+      `Video klaar: ${formatTime(nextDuration || 0)}. Zet de tijdlijn op address en kies Dit is mijn address.`
     );
     if (becameReady) {
-      setPoseStatus("Video klaar. Zet naar address, klik Analyseer en kalibreer setup.");
+      setPoseStatus("Video klaar. Zet de tijdlijn op address en leg dat frame vast.");
     }
   };
 
@@ -1786,7 +1788,7 @@ export default function Home() {
     if (!video || !Number.isFinite(duration)) return;
     video.currentTime = clamp(time, 0, duration);
     setCurrentTime(video.currentTime);
-    window.setTimeout(() => void analyzeFrame(false), 80);
+    setAnalyzedCheckpoint(null);
   };
 
   const stepFrame = (direction: -1 | 1) => {
@@ -1801,7 +1803,23 @@ export default function Home() {
     const checkpointId =
       phase.id === "address" ? "setup" : phase.id === "finish" ? "impact" : phase.id;
     setActiveCheckpoint(checkpointId);
+    setAnalyzedCheckpoint(null);
     seekTo(phase.time);
+  };
+
+  const chooseCheckpoint = (checkpointId: string) => {
+    setActiveCheckpoint(checkpointId);
+    setAnalyzedCheckpoint(null);
+    const phase = swingPhases.find((item) => item.id === checkpointId);
+    if (phase) {
+      jumpToPhase(phase);
+      setPoseStatus(`${phase.label} geselecteerd op ${formatPhaseTime(phase.time)}. Analyseer dit frame.`);
+      return;
+    }
+    const checkpoint = checkpoints.find((item) => item.id === checkpointId);
+    setPoseStatus(
+      `Zet de video handmatig op ${checkpoint?.label ?? checkpointId} en kies Analyseer frame.`
+    );
   };
 
   const openMobileCamera = () => {
@@ -1883,21 +1901,28 @@ export default function Home() {
     }
   };
 
-  const calibrateSetup = () => {
-    if (!landmarks) {
-      void analyzeFrame().then(() => {
-        setBaseline((previous) => previous);
-      });
-      setPoseStatus("Analyseer eerst het address-frame en kalibreer daarna.");
+  const calibrateSetup = async () => {
+    const detectedPose = landmarks ?? (await analyzeFrame());
+    if (!detectedPose || poseCoverageScore(detectedPose) < 0.7) {
+      setPoseStatus(
+        "Address niet betrouwbaar herkend. Zorg dat hoofd, handen, heupen en voeten zichtbaar zijn."
+      );
       return;
     }
-    setBaseline(landmarks);
-    drawPose(canvasRef.current, landmarks, landmarks, motionTrace);
-    setPoseStatus("Setup gekalibreerd. Ga nu naar top of impact en analyseer opnieuw.");
+    setLandmarks(detectedPose);
+    setAnalyzedCheckpoint(null);
+    setBaseline(detectedPose);
+    setActiveCheckpoint("takeaway");
+    drawPose(canvasRef.current, detectedPose, detectedPose, motionTrace);
+    setPoseStatus(
+      "Address staat vast. Kies Takeaway, Top of Impact, zet de video op dat moment en analyseer."
+    );
   };
 
   const resetAnalysis = () => {
     setLandmarks(null);
+    setAnalyzedCheckpoint(null);
+    setActiveCheckpoint("setup");
     setBaseline(null);
     setMotionTrace([]);
     setSwingWindow(null);
@@ -1923,12 +1948,15 @@ export default function Home() {
       focus: selectedFocusMetric?.label ?? activeCheckpointData.label,
       shot: shotResult,
       cameraView,
-      confidence: confidenceScore,
+      confidence: analysisQualityScore,
       cue: notes.trim() || undefined
     };
     const next = [entry, ...sessions].slice(0, 8);
     setSessions(next);
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    setNotes("");
+    setShotResult("unknown");
+    setPoseStatus("Trainingsmoment lokaal opgeslagen.");
   };
 
   const clearSessions = () => {
@@ -1938,8 +1966,8 @@ export default function Home() {
 
   const scoreStyle = { "--score": `${swingScore}%` } as CSSProperties;
 
-  return (
-    <main className="app-shell">
+return (
+    <main className="app-shell coach-app">
       <input
         ref={fileRef}
         className="file-input"
@@ -1955,24 +1983,25 @@ export default function Home() {
         capture="environment"
         onChange={handleFileChange}
       />
-      <header className="topbar">
+
+      <header className="topbar coach-topbar">
         <div className="brand">
           <div className="brand-mark" aria-hidden="true">
             <Target size={19} />
           </div>
           <div className="brand-copy">
-            <h1 className="brand-title">Saguto Swing Analyzer</h1>
-            <p className="brand-subtitle">Stack/Tilt practice loop voor minder armsy slaan</p>
+            <h1 className="brand-title">Mijn Swingcoach</h1>
+            <p className="brand-subtitle">Begrijp wat je lichaam doet en train een verbetering tegelijk</p>
           </div>
         </div>
         <div className="top-actions">
           <button className="btn btn-primary" type="button" onClick={openMobileCamera}>
             <Smartphone size={16} />
-            Film mobiel
+            Film swing
           </button>
           <button className="btn" type="button" onClick={() => fileRef.current?.click()}>
             <Upload size={16} />
-            Upload
+            Kies video
           </button>
           {isRecording ? (
             <button className="btn btn-danger" type="button" onClick={stopRecording}>
@@ -1982,727 +2011,542 @@ export default function Home() {
           ) : (
             <button className="btn" type="button" onClick={() => void startRecording(7)}>
               <Timer size={16} />
-              7s live
+              Live 7 sec
             </button>
           )}
-          <button
-            className="btn btn-primary"
-            type="button"
-            onClick={() => void analyzeFrame()}
-            disabled={isAnalyzing || isPoseLoading || isTracking || isTrimming || !canUseVideo}
-          >
-            <ScanLine size={16} />
-            {isAnalyzing || isPoseLoading ? "Analyseren" : "Analyseer"}
-          </button>
-          <button
-            className="btn"
-            type="button"
-            onClick={() => void autoTrimSwing()}
-            disabled={isTrimming || isTracking || isPoseLoading || !canScanRecordedVideo}
-          >
-            <Scissors size={16} />
-            {isTrimming ? `${trimProgress}%` : "Auto trim"}
-          </button>
-          <button
-            className="btn"
-            type="button"
-            onClick={() => void trackSwingMotion()}
-            disabled={isTracking || isTrimming || isPoseLoading || !canScanRecordedVideo}
-          >
-            <Activity size={16} />
-            {isTracking ? `${trackProgress}%` : "Track beweging"}
-          </button>
         </div>
       </header>
 
-      <div className="main-grid">
-        <section className="panel">
-          <div className="panel-header">
-            <div className="panel-title">
-              <Video size={18} />
-              <div>
-                <h2>Video lab</h2>
-                <p>{videoName || "Geen lokale swing geladen"}</p>
-              </div>
+      <div className="flow-shell">
+        <nav className="flow-progress" aria-label="Analysevoortgang">
+          {[
+            { number: 1, label: "Video" },
+            { number: 2, label: "Address" },
+            { number: 3, label: "Swingfase" },
+            { number: 4, label: "Oefenen" }
+          ].map((item) => (
+            <div
+              className={`flow-progress-item ${flowStep === item.number ? "is-active" : ""} ${
+                flowStep > item.number ? "is-done" : ""
+              }`}
+              key={item.number}
+              aria-current={flowStep === item.number ? "step" : undefined}
+            >
+              <span>{flowStep > item.number ? <CheckCircle2 size={16} /> : item.number}</span>
+              <strong>{item.label}</strong>
             </div>
-            <span className={`pill ${poseReady ? "pill-good" : "pill-warn"}`}>
-              {poseReady ? "Pose actief" : "Pose standby"}
-            </span>
-          </div>
-          <div className="panel-body">
-            <div className="workbench">
-              <div className="video-stage">
-                <div className="stage-head">
-                  <p className="stage-label">Mijn swing</p>
-                  <div className="stage-actions">
-                    <button
-                      className="btn icon-btn"
-                      type="button"
-                      onClick={() => void saveBestSwing()}
-                      disabled={!currentVideoBlob || videoLoadState === "error"}
-                      title="Markeer als beste swing"
-                    >
-                      <Star size={16} />
-                    </button>
-                    <button className="btn icon-btn" type="button" onClick={calibrateSetup} title="Kalibreer setup">
-                      <Target size={16} />
-                    </button>
-                    <button className="btn icon-btn" type="button" onClick={resetAnalysis} title="Reset analyse">
-                      <RotateCcw size={16} />
-                    </button>
+          ))}
+        </nav>
+
+        <div className="coach-grid">
+          <section className="panel video-panel">
+            <div className="panel-header">
+              <div className="panel-title">
+                <Video size={18} />
+                <div>
+                  <h2>Jouw swing</h2>
+                  <p>{videoName || "Begin met een korte video van een swing"}</p>
+                </div>
+              </div>
+              {poseReady ? <span className="pill pill-good">Lichaamsdetectie klaar</span> : null}
+            </div>
+
+            <div className="panel-body guided-video-body">
+              <div className={`video-frame video-frame-${videoOrientation}`}>
+                <video
+                  ref={videoRef}
+                  src={!cameraStream && videoUrl ? videoUrl : undefined}
+                  preload="auto"
+                  playsInline
+                  onLoadStart={handleVideoLoadStart}
+                  onLoadedMetadata={handleLoadedMetadata}
+                  onLoadedData={handleVideoReady}
+                  onCanPlay={handleVideoReady}
+                  onWaiting={handleVideoWaiting}
+                  onStalled={handleVideoWaiting}
+                  onError={handleVideoError}
+                  onTimeUpdate={handleTimeUpdate}
+                  onPlay={() => setIsPlaying(true)}
+                  onPause={() => setIsPlaying(false)}
+                  onEnded={() => setIsPlaying(false)}
+                  style={{ display: videoUrl || cameraStream ? "block" : "none" }}
+                />
+                <canvas ref={canvasRef} className="overlay-canvas" />
+                {(videoUrl || cameraStream) && videoLoadState !== "ready" ? (
+                  <div className={`video-load-overlay video-load-${videoLoadState}`}>
+                    <div>
+                      <strong>{videoLoadState === "error" ? "Video kan niet afspelen" : "Video laden"}</strong>
+                      <span>{videoLoadMessage}</span>
+                    </div>
                   </div>
-                </div>
-                <div className={`video-frame video-frame-${videoOrientation}`}>
-                  <video
-                    ref={videoRef}
-                    src={!cameraStream && videoUrl ? videoUrl : undefined}
-                    preload="auto"
-                    playsInline
-                    onLoadStart={handleVideoLoadStart}
-                    onLoadedMetadata={handleLoadedMetadata}
-                    onLoadedData={handleVideoReady}
-                    onCanPlay={handleVideoReady}
-                    onWaiting={handleVideoWaiting}
-                    onStalled={handleVideoWaiting}
-                    onError={handleVideoError}
-                    onTimeUpdate={handleTimeUpdate}
-                    onPlay={() => setIsPlaying(true)}
-                    onPause={() => setIsPlaying(false)}
-                    onEnded={() => setIsPlaying(false)}
-                    style={{ display: videoUrl || cameraStream ? "block" : "none" }}
-                  />
-                  <canvas ref={canvasRef} className="overlay-canvas" />
-                  {(videoUrl || cameraStream) && videoLoadState !== "ready" ? (
-                    <div className={`video-load-overlay video-load-${videoLoadState}`}>
-                      <div>
-                        <strong>
-                          {videoLoadState === "error"
-                            ? "Video kan niet afspelen"
-                            : videoLoadState === "metadata"
-                              ? "Eerste frame laden"
-                              : "Video laden"}
-                        </strong>
-                        <span>{videoLoadMessage}</span>
+                ) : null}
+                {!videoUrl && !cameraStream ? (
+                  <div className="empty-video coach-empty-video">
+                    <div>
+                      <Camera size={28} />
+                      <strong>Film een swing of kies een bestaande video</strong>
+                      <span>Je video blijft op dit apparaat en wordt niet geupload.</span>
+                      <div className="empty-video-actions">
+                        <button className="btn btn-primary" type="button" onClick={openMobileCamera}>
+                          <Smartphone size={16} />
+                          Film swing
+                        </button>
+                        <button className="btn" type="button" onClick={() => fileRef.current?.click()}>
+                          <Upload size={16} />
+                          Kies video
+                        </button>
                       </div>
                     </div>
-                  ) : null}
-                  {!videoUrl && !cameraStream ? (
-                    <div className="empty-video">
-                      <div>
-                        <strong>Upload of record je swing</strong>
-                        <span>Face-on, volledig lichaam in beeld, liefst 60 fps of meer.</span>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-                <div className={`video-load-status video-load-${videoLoadState}`}>
+                  </div>
+                ) : null}
+              </div>
+
+              {videoUrl || cameraStream ? (
+                <div className={`coach-status video-load-${videoLoadState}`} role="status">
                   <span className="video-status-dot" aria-hidden="true" />
                   <div>
-                    <strong>
-                      {videoLoadState === "ready"
-                        ? "Video klaar"
-                        : videoLoadState === "error"
-                          ? "Video fout"
-                          : videoLoadState === "empty"
-                            ? "Geen video"
-                            : "Video laden"}
-                    </strong>
+                    <strong>{videoLoadState === "ready" ? "Video klaar" : videoLoadState === "error" ? "Videofout" : "Even wachten"}</strong>
                     <span>{videoLoadMessage}</span>
                   </div>
                 </div>
-                <div className="controls-strip">
-                  <div className="toolbar">
-                    <button
-                      className="btn icon-btn"
-                      type="button"
-                      onClick={togglePlay}
-                      disabled={!canUseVideo}
-                      title="Play/pause"
-                    >
-                      {isPlaying ? <Pause size={16} /> : <Play size={16} />}
-                    </button>
-                    <button
-                      className="btn icon-btn"
-                      type="button"
-                      onClick={() => stepFrame(-1)}
-                      disabled={!canUseVideo}
-                      title="Frame terug"
-                    >
-                      <ChevronLeft size={16} />
-                    </button>
-                    <button
-                      className="btn icon-btn"
-                      type="button"
-                      onClick={() => stepFrame(1)}
-                      disabled={!canUseVideo}
-                      title="Frame vooruit"
-                    >
-                      <ChevronRight size={16} />
-                    </button>
-                  </div>
-                  <input
-                    className="scrubber"
-                    type="range"
-                    min="0"
-                    max={duration || 0}
-                    step="0.01"
-                    value={currentTime}
-                    onChange={(event) => seekTo(Number(event.target.value))}
-                    aria-label="Video scrubber"
-                    disabled={!duration || videoLoadState === "error"}
-                  />
-                  <div className="speed-control">
-                    <span>{formatTime(currentTime)} / {formatTime(duration)}</span>
-                    <select
-                      className="select"
-                      value={speed}
-                      onChange={(event) => setSpeed(Number(event.target.value))}
-                      aria-label="Playback speed"
-                    >
-                      <option value={0.25}>0.25x</option>
-                      <option value={0.5}>0.5x</option>
-                      <option value={1}>1x</option>
-                    </select>
-                  </div>
+              ) : (
+                <div className="capture-guide">
+                  <div><CheckCircle2 size={16} /><span>Volledig lichaam, handen en voeten in beeld</span></div>
+                  <div><CheckCircle2 size={16} /><span>Telefoon stil op heup- tot handhoogte</span></div>
+                  <div><CheckCircle2 size={16} /><span>Film face-on of recht down-the-line</span></div>
                 </div>
-                <div className="trim-strip">
-                  <div className="trim-copy">
-                    <strong>{swingWindow ? "Swing window actief" : "Nog geen auto-trim"}</strong>
-                    <span>
-                      {swingWindow
-                        ? `${formatTime(swingWindow.start)}-${formatTime(
-                            swingWindow.end
-                          )}, piek rond ${formatTime(swingWindow.peak)}`
-                        : "Auto trim scant de video en zet direct een herhaalbare replay-loop klaar."}
-                    </span>
-                  </div>
-                  <div className="stage-actions">
-                    <button
-                      className={`btn ${isLoopingWindow ? "btn-primary" : ""}`}
-                      type="button"
-                      onClick={() => setIsLoopingWindow((value) => !value)}
-                      disabled={!swingWindow}
-                    >
-                      <Repeat2 size={16} />
-                      Loop
-                    </button>
-                    <button
-                      className="btn"
-                      type="button"
-                      onClick={() => void autoTrimSwing()}
-                      disabled={isTrimming || isTracking || isPoseLoading || !canScanRecordedVideo}
-                    >
-                      <Scissors size={16} />
-                      {isTrimming ? `${trimProgress}%` : "Trim"}
-                    </button>
-                    <button
-                      className="btn"
-                      type="button"
-                      onClick={() => void saveBestSwing()}
-                      disabled={!currentVideoBlob || videoLoadState === "error"}
-                    >
-                      <Star size={16} />
-                      Beste
-                    </button>
-                  </div>
-                </div>
-                {swingPhases.length ? (
-                  <div className="phase-jump-strip">
-                    {swingPhases.map((phase) => (
-                      <button
-                        className="phase-jump-btn"
-                        type="button"
-                        key={phase.id}
-                        onClick={() => jumpToPhase(phase)}
-                      >
-                        <strong>{phase.label}</strong>
-                        <span>{formatTime(phase.time)}</span>
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
+              )}
 
-              <div className="video-stage">
-                <div className="stage-head">
-                  <p className="stage-label">
-                    {referenceMode === "best" && bestSwing ? "Mijn beste swing" : "Saguto referentie"}
-                  </p>
-                  <div className="stage-actions">
-                    <div className="segmented" aria-label="Referentie keuze">
-                      <button
-                        className="segment-btn"
-                        type="button"
-                        aria-pressed={referenceMode === "saguto"}
-                        onClick={() => setReferenceMode("saguto")}
-                      >
-                        Saguto
+              {canUseVideo ? (
+                <>
+                  <div className="controls-strip coach-controls">
+                    <div className="toolbar">
+                      <button className="btn icon-btn" type="button" onClick={togglePlay} title="Play/pause">
+                        {isPlaying ? <Pause size={16} /> : <Play size={16} />}
                       </button>
-                      <button
-                        className="segment-btn"
-                        type="button"
-                        aria-pressed={referenceMode === "best"}
-                        onClick={() => setReferenceMode("best")}
-                        disabled={!bestSwing}
-                      >
-                        Beste
+                      <button className="btn icon-btn" type="button" onClick={() => stepFrame(-1)} title="Frame terug">
+                        <ChevronLeft size={16} />
+                      </button>
+                      <button className="btn icon-btn" type="button" onClick={() => stepFrame(1)} title="Frame vooruit">
+                        <ChevronRight size={16} />
                       </button>
                     </div>
-                    {referenceMode === "best" && bestSwing ? (
-                      <button className="btn icon-btn" type="button" onClick={() => void clearBestSwing()} title="Wis beste swing">
-                        <RefreshCcw size={16} />
-                      </button>
-                    ) : (
-                      <a
-                        className="btn"
-                        href={`https://www.youtube.com/watch?v=${SAGUTO_VIDEO_ID}`}
-                        target="_blank"
-                        rel="noreferrer"
+                    <input
+                      className="scrubber"
+                      type="range"
+                      min="0"
+                      max={duration || 0}
+                      step="0.01"
+                      value={currentTime}
+                      onChange={(event) => seekTo(Number(event.target.value))}
+                      aria-label="Video scrubber"
+                    />
+                    <div className="speed-control">
+                      <span>{formatPhaseTime(currentTime)} / {formatTime(duration)}</span>
+                      <select
+                        className="select"
+                        value={speed}
+                        onChange={(event) => setSpeed(Number(event.target.value))}
+                        aria-label="Afspeelsnelheid"
                       >
-                        <ExternalLink size={16} />
-                        YouTube
-                      </a>
+                        <option value={0.25}>0.25x</option>
+                        <option value={0.5}>0.5x</option>
+                        <option value={1}>1x</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="preflight-grid">
+                    <div className="field">
+                      <label htmlFor="camera-view">Camerastandpunt</label>
+                      <select
+                        id="camera-view"
+                        className="select"
+                        value={cameraView}
+                        onChange={(event) => {
+                          setCameraView(event.target.value as CameraView);
+                          resetAnalysis();
+                        }}
+                      >
+                        <option value="face-on">Face-on</option>
+                        <option value="down-the-line">Down the line</option>
+                      </select>
+                    </div>
+                    <div className="field">
+                      <label htmlFor="handedness">Je speelt</label>
+                      <select
+                        id="handedness"
+                        className="select"
+                        value={handedness}
+                        onChange={(event) => setHandedness(event.target.value as Handedness)}
+                      >
+                        <option value="right">Rechtshandig</option>
+                        <option value="left">Linkshandig</option>
+                      </select>
+                    </div>
+                    <div className="field">
+                      <label htmlFor="target-side">Target in beeld</label>
+                      <select
+                        id="target-side"
+                        className="select"
+                        value={targetSide}
+                        onChange={(event) => setTargetSide(event.target.value as TargetSide)}
+                      >
+                        <option value="left">Links</option>
+                        <option value="right">Rechts</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <section className="next-action-card" aria-labelledby="next-action-title">
+                    {flowStep === 2 ? (
+                      <>
+                        <span className="step-kicker">Stap 2 van 4</span>
+                        <h3 id="next-action-title">Zet de video op je address</h3>
+                        <p>Gebruik de tijdlijn of frameknoppen. Kies het moment vlak voordat je club begint te bewegen.</p>
+                        <button className="btn btn-primary btn-large" type="button" onClick={() => void calibrateSetup()}>
+                          <Target size={17} />
+                          Dit is mijn address
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="step-kicker">Stap {analysisReady ? 4 : 3} van 4</span>
+                        <h3 id="next-action-title">
+                          {analysisReady ? `${activeCheckpointData.label} is geanalyseerd` : "Kies het swingmoment dat je wilt begrijpen"}
+                        </h3>
+                        <div className="checkpoint-picker" aria-label="Swingfase">
+                          {checkpoints.filter((checkpoint) => checkpoint.id !== "setup").map((checkpoint) => (
+                            <button
+                              className="checkpoint-choice"
+                              type="button"
+                              key={checkpoint.id}
+                              aria-pressed={activeCheckpoint === checkpoint.id}
+                              onClick={() => chooseCheckpoint(checkpoint.id)}
+                            >
+                              <strong>{checkpoint.label}</strong>
+                              <span>{checkpoint.cue}</span>
+                            </button>
+                          ))}
+                        </div>
+                        <div className="primary-action-row">
+                          <button
+                            className="btn btn-primary btn-large"
+                            type="button"
+                            onClick={() => void analyzeFrame()}
+                            disabled={isAnalyzing || isPoseLoading || isTracking || isTrimming}
+                          >
+                            <ScanLine size={17} />
+                            {isAnalyzing || isPoseLoading ? "Lichaam herkennen..." : `Analyseer ${activeCheckpointData.label}`}
+                          </button>
+                          {canScanRecordedVideo ? (
+                            <button
+                              className="btn"
+                              type="button"
+                              onClick={() => void autoTrimSwing()}
+                              disabled={isTrimming || isTracking || isPoseLoading}
+                            >
+                              <Scissors size={16} />
+                              {isTrimming ? `Fases zoeken ${trimProgress}%` : "Fases automatisch zoeken"}
+                            </button>
+                          ) : null}
+                        </div>
+                      </>
                     )}
+                  </section>
+
+                  <div className={`analysis-message ${poseStatus.includes("niet") || poseStatus.includes("mislukt") || poseStatus.includes("Geen") ? "is-warning" : ""}`} role="status">
+                    <CircleAlert size={17} />
+                    <span>{poseStatus}</span>
+                  </div>
+
+                  <details className="advanced-tools">
+                    <summary>Extra videohulpmiddelen</summary>
+                    <div className="advanced-tools-body">
+                      <div className="toolbar">
+                        {canScanRecordedVideo ? (
+                          <button className="btn" type="button" onClick={() => void trackSwingMotion()} disabled={isTracking || isTrimming || isPoseLoading}>
+                            <Activity size={16} />
+                            {isTracking ? `Beweging meten ${trackProgress}%` : "Meet hele beweging"}
+                          </button>
+                        ) : null}
+                        <button className="btn" type="button" onClick={() => setIsLoopingWindow((value) => !value)} disabled={!swingWindow}>
+                          <Repeat2 size={16} />
+                          {isLoopingWindow ? "Herhalen aan" : "Herhalen uit"}
+                        </button>
+                        <button className="btn" type="button" onClick={resetAnalysis}>
+                          <RotateCcw size={16} />
+                          Nieuwe analyse
+                        </button>
+                      </div>
+                      {swingPhases.length ? (
+                        <div className="phase-jump-strip">
+                          {swingPhases.map((phase) => (
+                            <button className="phase-jump-btn" type="button" key={phase.id} onClick={() => jumpToPhase(phase)}>
+                              <strong>{phase.label}</strong>
+                              <span>{formatPhaseTime(phase.time)}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="helper-copy">Automatische fases zijn optioneel. Handmatig naar een frame gaan is vaak nauwkeuriger.</p>
+                      )}
+                    </div>
+                  </details>
+                </>
+              ) : null}
+            </div>
+          </section>
+
+          <aside className="side-stack coach-feedback">
+            <section className="panel feedback-panel">
+              <div className="panel-header">
+                <div className="panel-title">
+                  <BarChart3 size={18} />
+                  <div>
+                    <h2>Jouw feedback</h2>
+                    <p>Een swingmoment, een werkpunt, een oefening</p>
                   </div>
                 </div>
-                <div className="video-frame">
-                  {referenceMode === "best" && bestSwing ? (
-                    <video
-                      src={bestSwing.url}
-                      controls
-                      playsInline
-                      onLoadedMetadata={(event) => {
-                        if (bestSwing.window) event.currentTarget.currentTime = bestSwing.window.start;
-                      }}
-                    />
-                  ) : referenceMode === "best" ? (
-                    <div className="empty-video">
-                      <div>
-                        <strong>Nog geen beste swing</strong>
-                        <span>Laad een goede bal, trim eventueel, en tik op de ster bij Mijn swing.</span>
+                {analysisReady ? <span className="pill pill-good">2D-indicatie</span> : null}
+              </div>
+              <div className="panel-body">
+                {!canUseVideo ? (
+                  <div className="coach-welcome">
+                    <span className="welcome-icon"><Dumbbell size={24} /></span>
+                    <h3>Geen technisch dashboard, maar een persoonlijke oefenlus</h3>
+                    <p>Na je video zie je per swingfase wat je lichaam doet en welk punt nu het meeste oplevert.</p>
+                    <div className="welcome-points">
+                      <div><strong>1</strong><span>Address vastzetten</span></div>
+                      <div><strong>2</strong><span>Takeaway, top of impact kiezen</span></div>
+                      <div><strong>3</strong><span>Een gerichte drill uitvoeren</span></div>
+                    </div>
+                  </div>
+                ) : !baseline ? (
+                  <div className="pending-feedback">
+                    <Target size={30} />
+                    <h3>Eerst een betrouwbaar nulpunt</h3>
+                    <p>Je address wordt de vergelijking voor hoofd, schouders, armen en lichaamscentrum.</p>
+                  </div>
+                ) : !analysisReady ? (
+                  <div className="pending-feedback">
+                    <ScanLine size={30} />
+                    <h3>Analyseer nu {activeCheckpointData.label.toLowerCase()}</h3>
+                    <p>{activeCheckpointData.target}. Zet de video goed en kies daarna Analyseer {activeCheckpointData.label}.</p>
+                    {landmarks && analysisQualityScore < 70 ? (
+                      <div className="quality-warning">Te weinig lichaamsdelen betrouwbaar zichtbaar. Pas het frame of de opname aan.</div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="result-stack">
+                    <div className="score-band result-score-band">
+                      <div className="score-ring" style={scoreStyle}>
+                        <div>
+                          <strong>{swingScore}</strong>
+                          <span>fase-indicatie</span>
+                        </div>
                       </div>
+                      <div className="score-copy">
+                        <span className="step-kicker">{activeCheckpointData.label}</span>
+                        <h3>{scoreLabel}</h3>
+                        <p>Deze score is alleen bedoeld om jouw eigen herhaalde opnames onder vergelijkbare omstandigheden te vergelijken.</p>
+                        {bestDelta !== null ? <p className="delta-line">{bestDelta >= 0 ? "+" : ""}{bestDelta} versus je opgeslagen beste swing</p> : null}
+                      </div>
+                    </div>
+
+                    <div className="quality-strip">
+                      <div>
+                        <strong>{analysisQualityLabel}</strong>
+                        <span>{analysisQualityScore}% van de benodigde lichaamsdelen zichtbaar</span>
+                      </div>
+                      <div className="confidence-meter" aria-label={`Beeldkwaliteit ${analysisQualityScore}`}>
+                        <span style={{ "--value": `${analysisQualityScore}%` } as CSSProperties} />
+                      </div>
+                    </div>
+
+                    {selectedFocusMetric ? (
+                      <div className={`focus-coach-card metric-${selectedFocusMetric.status}`}>
+                        <div className="focus-coach-head">
+                          <span><Target size={18} /></span>
+                          <div>
+                            <small>Jouw belangrijkste werkpunt</small>
+                            <h3>{selectedFocusMetric.label}</h3>
+                          </div>
+                          <strong>{selectedFocusMetric.value}</strong>
+                        </div>
+                        <p>{selectedFocusMetric.detail}</p>
+                        <div className="drill-callout">
+                          <Dumbbell size={18} />
+                          <div>
+                            <strong>{focusDrill.title}</strong>
+                            <span>{focusDrill.detail}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <details className="metric-details">
+                      <summary>Bekijk alle metingen voor {activeCheckpointData.label.toLowerCase()}</summary>
+                      <div className="metric-list">
+                        {displayedMetrics.map((metric) => {
+                          const MetricIcon = iconMap[metric.icon];
+                          return (
+                            <div className="metric-row" key={metric.id}>
+                              <span className="metric-icon"><MetricIcon size={17} /></span>
+                              <div className="metric-main">
+                                <strong>{metric.label} - {metric.value}</strong>
+                                <span>{metric.detail}</span>
+                              </div>
+                              <div className="meter" aria-label={`${metric.label} indicatie ${metric.score}`}>
+                                <span style={{ "--value": `${metric.score}%` } as CSSProperties} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </details>
+
+                    <div className="session-capture">
+                      <div className="session-capture-head">
+                        <div>
+                          <h3>Bewaar dit trainingsmoment</h3>
+                          <p>Voeg balvlucht en je gevoel toe om later patronen te herkennen.</p>
+                        </div>
+                        <button className="btn" type="button" onClick={() => void saveBestSwing()}>
+                          <Star size={16} />
+                          Maak beste swing
+                        </button>
+                      </div>
+                      <div className="session-fields">
+                        <div className="field">
+                          <label htmlFor="club">Club</label>
+                          <input id="club" className="input" value={club} onChange={(event) => setClub(event.target.value)} />
+                        </div>
+                        <div className="field">
+                          <label htmlFor="notes">Swinggevoel</label>
+                          <input id="notes" className="input" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Bijv. borst blijft draaien" />
+                        </div>
+                      </div>
+                      <div className="shot-result-grid compact-shot-grid">
+                        {shotResults.map((result) => (
+                          <button className="shot-btn" type="button" key={result.id} aria-pressed={shotResult === result.id} onClick={() => setShotResult(result.id)}>
+                            {result.label}
+                          </button>
+                        ))}
+                      </div>
+                      <button className="btn btn-primary btn-large" type="button" onClick={saveSession}>
+                        <Save size={16} />
+                        Sla trainingsmoment op
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {canScanRecordedVideo ? (
+              <details className="panel disclosure-panel" open={motionTrace.length > 0}>
+                <summary className="panel-header disclosure-summary">
+                  <div className="panel-title">
+                    <Activity size={18} />
+                    <div><h3>Beweging door de hele swing</h3><p>Optioneel: hoofd- en lichaamscentrum volgen</p></div>
+                  </div>
+                  <ChevronRight size={18} />
+                </summary>
+                <div className="panel-body">
+                  {!motionTrace.length ? (
+                    <div className="optional-action">
+                      <p>Gebruik dit als je wilt zien hoeveel je hoofd en lichaamscentrum door de volledige swing bewegen.</p>
+                      <button className="btn" type="button" onClick={() => void trackSwingMotion()} disabled={isTracking || isTrimming || isPoseLoading}>
+                        <Activity size={16} />
+                        {isTracking ? `Meten ${trackProgress}%` : "Meet volledige swing"}
+                      </button>
                     </div>
                   ) : (
-                    <iframe
-                      title="Saguto reference swing"
-                      src={`https://www.youtube.com/embed/${SAGUTO_VIDEO_ID}`}
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                      allowFullScreen
-                    />
+                    <>
+                      <div className="motion-chart">
+                        <svg viewBox="0 0 100 52" role="img" aria-label="Bewegingspad">
+                          <line className="motion-axis" x1="50" y1="3" x2="50" y2="49" />
+                          <line className="motion-axis" x1="3" y1="26" x2="97" y2="26" />
+                          {headPath ? <path className="motion-head" d={headPath} /> : null}
+                          {centerPath ? <path className="motion-center" d={centerPath} /> : null}
+                          <circle className="motion-origin" cx="50" cy="26" r="2.2" />
+                        </svg>
+                      </div>
+                      <div className="motion-grid">
+                        <div className="motion-card"><strong>{motionSummary ? `${motionSummary.headSwayPct.toFixed(0)}%` : "--"}</strong><span>max hoofd zijwaarts</span></div>
+                        <div className="motion-card"><strong>{motionSummary ? `${motionSummary.headVerticalPct.toFixed(0)}%` : "--"}</strong><span>hoofd op/neer</span></div>
+                        <div className="motion-card"><strong>{motionSummary ? `${motionSummary.centerAwayPct.toFixed(0)}%` : "--"}</strong><span>centrum weg van target</span></div>
+                        <div className="motion-card"><strong>{motionSummary ? `${motionSummary.centerTargetPct.toFixed(0)}%` : "--"}</strong><span>centrum naar target</span></div>
+                      </div>
+                    </>
                   )}
                 </div>
-                {referenceMode === "best" && bestSwing ? (
-                  <div className="best-meta">
-                    <strong>{bestSwing.name}</strong>
-                    <span>
-                      {bestSwing.savedAt} - score {bestSwing.score || "--"} - focus {bestSwing.focus}
-                    </span>
+              </details>
+            ) : null}
+
+            <details className="panel disclosure-panel" open={Boolean(bestSwing || sessions.length)}>
+              <summary className="panel-header disclosure-summary">
+                <div className="panel-title">
+                  <Star size={18} />
+                  <div><h3>Vergelijken en voortgang</h3><p>Alleen jouw eigen swings, lokaal bewaard</p></div>
+                </div>
+                <ChevronRight size={18} />
+              </summary>
+              <div className="panel-body history-stack">
+                {bestSwing ? (
+                  <div className="best-swing-card">
+                    <video src={bestSwing.url} controls playsInline />
+                    <div className="best-meta">
+                      <strong>{bestSwing.name}</strong>
+                      <span>{bestSwing.savedAt} - indicatie {bestSwing.score || "--"} - focus {bestSwing.focus}</span>
+                      <button className="btn" type="button" onClick={() => void clearBestSwing()}><RefreshCcw size={16} />Wis beste swing</button>
+                    </div>
                   </div>
-                ) : null}
-                <div className="timeline">
-                  {checkpoints.map((checkpoint) => (
-                    <button
-                      className="phase-btn"
-                      type="button"
-                      key={checkpoint.id}
-                      onClick={() => setActiveCheckpoint(checkpoint.id)}
-                      aria-pressed={activeCheckpoint === checkpoint.id}
-                    >
-                      <strong>{checkpoint.label}</strong>
-                      <span>{checkpoint.cue}</span>
-                    </button>
+                ) : <p className="helper-copy">Nog geen beste swing opgeslagen.</p>}
+
+                {sessions.length ? (
+                  <div className="reference-list">
+                    {sessions.map((session) => (
+                      <div className="reference-item" key={session.id}>
+                        <span className="reference-number">{session.score}</span>
+                        <div>
+                          <strong>{session.club} - {session.date}</strong>
+                          <span>{session.focus} - {shotResults.find((result) => result.id === session.shot)?.label ?? "Geen"}{session.cue ? ` - ${session.cue}` : ""}</span>
+                        </div>
+                      </div>
+                    ))}
+                    <button className="btn" type="button" onClick={clearSessions}>Wis trainingslog</button>
+                  </div>
+                ) : <p className="helper-copy">Na een geldige analyse kun je hier trainingsmomenten bewaren.</p>}
+              </div>
+            </details>
+
+            <details className="panel disclosure-panel">
+              <summary className="panel-header disclosure-summary">
+                <div className="panel-title">
+                  <ListChecks size={18} />
+                  <div><h3>Coachprincipes en referentie</h3><p>Uitleg achter de metingen</p></div>
+                </div>
+                <ChevronRight size={18} />
+              </summary>
+              <div className="panel-body">
+                <div className="reference-list">
+                  {referencePrinciples.map((principle, index) => (
+                    <div className="reference-item" key={principle.title}>
+                      <span className="reference-number">{index + 1}</span>
+                      <div><strong>{principle.title}</strong><span>{principle.text}</span></div>
+                    </div>
                   ))}
                 </div>
+                <a className="btn reference-link" href={`https://www.youtube.com/watch?v=${SAGUTO_VIDEO_ID}`} target="_blank" rel="noreferrer">
+                  <ExternalLink size={16} />Bekijk de gebruikte coachreferentie op YouTube
+                </a>
+                <p className="disclaimer">Deze app geeft een experimentele 2D-indicatie voor eigen training. Camerahoek, kleding en licht kunnen de meting beinvloeden.</p>
               </div>
-            </div>
-
-            <div className="settings-grid">
-              <div className="field">
-                <label htmlFor="handedness">Hand</label>
-                <select
-                  id="handedness"
-                  className="select"
-                  value={handedness}
-                  onChange={(event) => setHandedness(event.target.value as Handedness)}
-                >
-                  <option value="right">Rechtshandig</option>
-                  <option value="left">Linkshandig</option>
-                </select>
-              </div>
-              <div className="field">
-                <label htmlFor="target-side">Target</label>
-                <select
-                  id="target-side"
-                  className="select"
-                  value={targetSide}
-                  onChange={(event) => setTargetSide(event.target.value as TargetSide)}
-                >
-                  <option value="left">Links in beeld</option>
-                  <option value="right">Rechts in beeld</option>
-                </select>
-              </div>
-              <div className="field">
-                <label htmlFor="camera-view">Camera</label>
-                <select
-                  id="camera-view"
-                  className="select"
-                  value={cameraView}
-                  onChange={(event) => setCameraView(event.target.value as CameraView)}
-                >
-                  <option value="face-on">Face-on</option>
-                  <option value="down-the-line">Down the line</option>
-                </select>
-              </div>
-              <div className="field">
-                <label htmlFor="club">Club</label>
-                <input
-                  id="club"
-                  className="input"
-                  value={club}
-                  onChange={(event) => setClub(event.target.value)}
-                />
-              </div>
-            </div>
-            <div className="setup-wizard">
-              {setupItems.map((item) => (
-                <div className="setup-item" key={item.label}>
-                  <span className={`setup-dot ${item.done ? "setup-dot-done" : ""}`}>
-                    {item.done ? <CheckCircle2 size={14} /> : <CircleAlert size={14} />}
-                  </span>
-                  <div>
-                    <strong>{item.label}</strong>
-                    <span>{item.text}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="mobile-capture">
-              <div>
-                <strong>Mobiele opname</strong>
-                <span>Gebruik Film mobiel voor de native camera. Dat werkt ook wanneer live recording door HTTP wordt geblokkeerd.</span>
-              </div>
-              <div>
-                <strong>Beste beeld</strong>
-                <span>Portrait mag: face-on, telefoon op heup- tot handhoogte, bal, handen en finish volledig in beeld.</span>
-              </div>
-              <div>
-                <strong>Snelle loop</strong>
-                <span>Neem 1 swing op, kalibreer address, check top/impact, doe de drill en film opnieuw.</span>
-              </div>
-            </div>
-            <p className={`status-line ${poseStatus.includes("mislukt") ? "error-line" : ""}`}>
-              {poseStatus}{" "}
-              {cameraView === "down-the-line"
-                ? "Down-the-line metrics letten op posture, hip depth en hand path."
-                : "Face-on metrics letten op sway, stack center en lead shoulder down."}
-            </p>
-          </div>
-        </section>
-
-        <aside className="side-stack">
-          <section className="panel">
-            <div className="panel-header">
-              <div className="panel-title">
-                <BarChart3 size={18} />
-                <div>
-                  <h3>Analyse</h3>
-                  <p>{activeCheckpointData.label}: {activeCheckpointData.target}</p>
-                </div>
-              </div>
-              <button
-                className="btn icon-btn"
-                type="button"
-                onClick={saveSession}
-                disabled={!swingScore}
-                title="Sla sessie op"
-              >
-                <Save size={16} />
-              </button>
-            </div>
-            <div className="panel-body">
-              <div className="score-band">
-                <div className="score-ring" style={scoreStyle}>
-                  <div>
-                    <strong>{swingScore || "--"}</strong>
-                    <span>stack score</span>
-                  </div>
-                </div>
-                <div className="score-copy">
-                  <h3>{scoreLabel}</h3>
-                  <p>
-                    Focus nu op <strong>{selectedFocusMetric?.label ?? "setup calibratie"}</strong>. De app stuurt op
-                    stabiel centrum, connected arms en body-release door impact.
-                  </p>
-                  {bestDelta !== null ? (
-                    <p className="delta-line">
-                      Beste swing vergelijking: {bestDelta >= 0 ? "+" : ""}
-                      {bestDelta} punten.
-                    </p>
-                  ) : null}
-                </div>
-              </div>
-              <div className="confidence-strip">
-                <div>
-                  <strong>{confidenceLabel}</strong>
-                  <span>analyse vertrouwen</span>
-                </div>
-                <div className="confidence-meter" aria-label={`Analyse vertrouwen ${confidenceScore}`}>
-                  <span style={{ "--value": `${confidenceScore}%` } as CSSProperties} />
-                </div>
-                <small>{confidenceScore}%</small>
-              </div>
-            </div>
-          </section>
-
-          <section className="panel">
-            <div className="panel-header">
-              <div className="panel-title">
-                <ListChecks size={18} />
-                <div>
-                  <h3>Checkpoints</h3>
-                  <p>Meetbaar per frame</p>
-                </div>
-              </div>
-            </div>
-            <div className="panel-body">
-              <div className="focus-row">
-                <div className="field">
-                  <label htmlFor="focus-metric">Focus mode</label>
-                  <select
-                    id="focus-metric"
-                    className="select"
-                    value={metrics.some((metric) => metric.id === focusMetricId) ? focusMetricId : "auto"}
-                    onChange={(event) => setFocusMetricId(event.target.value)}
-                  >
-                    <option value="auto">Auto: zwakste punt</option>
-                    {metrics.map((metric) => (
-                      <option value={metric.id} key={metric.id}>
-                        Alleen {metric.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div className="metric-list">
-                {displayedMetrics.map((metric) => {
-                  const Icon = iconMap[metric.icon];
-                  return (
-                    <div className="metric-row" key={metric.id}>
-                      <div className="metric-icon">
-                        <Icon size={17} />
-                      </div>
-                      <div className="metric-main">
-                        <strong>{metric.label} - {metric.value}</strong>
-                        <span>{metric.detail}</span>
-                      </div>
-                      <div className="meter" aria-label={`${metric.label} score ${metric.score}`}>
-                        <span
-                          style={{ "--value": `${clamp(metric.score)}%` } as CSSProperties}
-                          className={`meter-${metric.status}`}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </section>
-
-          <section className="panel">
-            <div className="panel-header">
-              <div className="panel-title">
-                <Activity size={18} />
-                <div>
-                  <h3>Bewegingstracking</h3>
-                  <p>Hoofdpad en center-drift door de swing</p>
-                </div>
-              </div>
-              <button
-                className="btn"
-                type="button"
-                onClick={() => void trackSwingMotion()}
-                disabled={isTracking || isPoseLoading || !canScanRecordedVideo}
-              >
-                <Activity size={16} />
-                {isTracking ? `${trackProgress}%` : "Track"}
-              </button>
-            </div>
-            <div className="panel-body">
-              <div className="motion-chart">
-                {headPath || centerPath ? (
-                  <svg viewBox="0 0 100 52" role="img" aria-label="Bewegingspad">
-                    <line x1="50" y1="4" x2="50" y2="48" className="motion-axis" />
-                    <line x1="4" y1="26" x2="96" y2="26" className="motion-axis" />
-                    {centerPath ? <path d={centerPath} className="motion-center" /> : null}
-                    {headPath ? <path d={headPath} className="motion-head" /> : null}
-                    <circle cx="50" cy="26" r="2.2" className="motion-origin" />
-                  </svg>
-                ) : (
-                  <div className="motion-empty">
-                    <CircleAlert size={18} />
-                    <span>Track een opgenomen swing om hoofd- en centerpad te zien.</span>
-                  </div>
-                )}
-              </div>
-              <div className="motion-grid">
-                <div className="motion-card">
-                  <strong>{motionSummary ? `${motionSummary.headSwayPct.toFixed(0)}%` : "--"}</strong>
-                  <span>max head sway</span>
-                </div>
-                <div className="motion-card">
-                  <strong>{motionSummary ? `${motionSummary.headVerticalPct.toFixed(0)}%` : "--"}</strong>
-                  <span>verticale hoofdbeweging</span>
-                </div>
-                <div className="motion-card">
-                  <strong>{motionSummary ? `${motionSummary.centerAwayPct.toFixed(0)}%` : "--"}</strong>
-                  <span>{cameraView === "down-the-line" ? "center horizontaal A" : "center weg van target"}</span>
-                </div>
-                <div className="motion-card">
-                  <strong>{motionSummary ? `${motionSummary.centerTargetPct.toFixed(0)}%` : "--"}</strong>
-                  <span>{cameraView === "down-the-line" ? "center horizontaal B" : "center naar target"}</span>
-                </div>
-              </div>
-              <p className="status-line">
-                Oranje trackt je hoofd. Blauw trackt borst/heup-center.{" "}
-                {cameraView === "down-the-line"
-                  ? "Bij zijkant-video gebruik je dit vooral voor posture en early-extension indicatie."
-                  : "Voor Saguto wil je vooral weinig drift weg van target zien."}
-              </p>
-            </div>
-          </section>
-
-          <section className="panel">
-            <div className="panel-header">
-              <div className="panel-title">
-                <Dumbbell size={18} />
-                <div>
-                  <h3>Practice block</h3>
-                  <p>1 issue, 1 drill, opnieuw testen</p>
-                </div>
-              </div>
-              <span className={`pill ${selectedFocusMetric?.status === "bad" ? "pill-bad" : "pill-warn"}`}>
-                {selectedFocusMetric?.label ?? "Setup"}
-              </span>
-            </div>
-            <div className="panel-body">
-              <div className="coach-plan">
-                <div className="coach-step">
-                  <span>1</span>
-                  <div>
-                    <strong>{focusDrill.title}</strong>
-                    <small>{focusDrill.detail}</small>
-                  </div>
-                </div>
-                <div className="coach-step">
-                  <span>2</span>
-                  <div>
-                    <strong>5-ball block</strong>
-                    <small>Film de laatste bal, zet playback op 0.5x en analyseer hetzelfde checkpoint.</small>
-                  </div>
-                </div>
-                <div className="coach-step">
-                  <span>3</span>
-                  <div>
-                    <strong>Commit swing</strong>
-                    <small>Gebruik alleen de beste feel van de drill en sla 3 normale ballen zonder extra gedachten.</small>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className="panel">
-            <div className="panel-header">
-              <div className="panel-title">
-                <CheckCircle2 size={18} />
-                <div>
-                  <h3>Saguto model</h3>
-                  <p>Referentiepunten voor deze app</p>
-                </div>
-              </div>
-            </div>
-            <div className="panel-body">
-              <div className="reference-list">
-                {referencePrinciples.map((item, index) => (
-                  <div className="reference-item" key={item.title}>
-                    <span className="reference-number">{index + 1}</span>
-                    <div>
-                      <strong>{item.title}</strong>
-                      <span>{item.text}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          <section className="panel">
-            <div className="panel-header">
-              <div className="panel-title">
-                <FileVideo size={18} />
-                <div>
-                  <h3>Sessie log</h3>
-                  <p>Lokale voortgang</p>
-                </div>
-              </div>
-              <button className="btn icon-btn" type="button" onClick={clearSessions} title="Wis log">
-                <RefreshCcw size={16} />
-              </button>
-            </div>
-            <div className="panel-body">
-              <div className="shot-result-grid">
-                {shotResults.map((result) => (
-                  <button
-                    className="shot-btn"
-                    type="button"
-                    key={result.id}
-                    aria-pressed={shotResult === result.id}
-                    onClick={() => setShotResult(result.id)}
-                  >
-                    {result.label}
-                  </button>
-                ))}
-              </div>
-              <div className="field">
-                <label htmlFor="notes">Feel cue</label>
-                <input
-                  id="notes"
-                  className="input"
-                  value={notes}
-                  onChange={(event) => setNotes(event.target.value)}
-                  placeholder="Bijv. borst blijft draaien"
-                />
-              </div>
-              <div className="reference-list" style={{ marginTop: 10 }}>
-                {sessions.length ? (
-                  sessions.map((session) => (
-                    <div className="reference-item" key={session.id}>
-                      <span className="reference-number">{session.score}</span>
-                      <div>
-                        <strong>{session.club} - {session.date}</strong>
-                        <span>
-                          Focus: {session.focus} - Shot:{" "}
-                          {shotResults.find((result) => result.id === session.shot)?.label ?? "Geen"} -{" "}
-                          {session.cameraView === "down-the-line" ? "DTL" : "Face-on"} - vertrouwen{" "}
-                          {session.confidence ?? "--"}%
-                          {session.cue ? ` - Cue: ${session.cue}` : ""}
-                        </span>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="reference-item">
-                    <span className="reference-number">0</span>
-                    <div>
-                      <strong>Nog geen opgeslagen swings</strong>
-                      <span>Analyseer een frame en sla de sessie op.</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </section>
-        </aside>
+            </details>
+          </aside>
+        </div>
       </div>
     </main>
   );

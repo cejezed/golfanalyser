@@ -2,12 +2,12 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Saguto Swing Analyzer",
-  description: "Lokale golf swing analyzer voor video, pose-checkpoints en gerichte practice feedback.",
+  title: "Mijn Swingcoach",
+  description: "Persoonlijke golf swingcoach voor lokale videoanalyse, lichaamsfeedback en gerichte oefeningen.",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    title: "Swing Analyzer",
+    title: "Mijn Swingcoach",
     statusBarStyle: "default"
   }
 };
